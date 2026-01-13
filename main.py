@@ -154,8 +154,167 @@ def init_db():
             )
         """)
 
+        # NEW: Alert Enrichment Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alert_enrichment (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER UNIQUE,
+                threat_score INTEGER DEFAULT 0,
+                mitre_attack_tactic TEXT,
+                mitre_attack_technique TEXT,
+                geo_country TEXT,
+                geo_city TEXT,
+                source_ip TEXT,
+                is_known_threat BOOLEAN DEFAULT 0,
+                threat_intel_source TEXT,
+                similar_incidents_count INTEGER DEFAULT 0,
+                time_to_detection_seconds INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (log_id) REFERENCES raw_logs(id)
+            )
+        """)
+
+        # NEW: Host/Asset Management Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hostname TEXT UNIQUE NOT NULL,
+                ip_address TEXT,
+                asset_classification TEXT DEFAULT 'Unknown',
+                criticality TEXT DEFAULT 'Medium',
+                risk_score INTEGER DEFAULT 50,
+                total_alerts INTEGER DEFAULT 0,
+                last_seen TEXT,
+                first_seen TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # NEW: Threat Intelligence Cache Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS threat_intel_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator TEXT UNIQUE NOT NULL,
+                indicator_type TEXT NOT NULL,
+                threat_score INTEGER DEFAULT 0,
+                is_malicious BOOLEAN DEFAULT 0,
+                threat_type TEXT,
+                source TEXT,
+                last_checked TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # NEW: Incident Tracking Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incidents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT DEFAULT 'Open',
+                assigned_to TEXT,
+                primary_log_id INTEGER,
+                related_log_ids TEXT,
+                mitre_tactics TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                FOREIGN KEY (primary_log_id) REFERENCES raw_logs(id)
+            )
+        """)
+
+        # NEW: Response Actions/Playbooks Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS response_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER,
+                incident_id INTEGER,
+                action_type TEXT NOT NULL,
+                action_description TEXT,
+                status TEXT DEFAULT 'Pending',
+                executed_at TEXT,
+                result TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (log_id) REFERENCES raw_logs(id),
+                FOREIGN KEY (incident_id) REFERENCES incidents(id)
+            )
+        """)
+
+        # NEW: Correlation Rules Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS correlation_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_name TEXT UNIQUE NOT NULL,
+                rule_description TEXT,
+                rule_pattern TEXT NOT NULL,
+                time_window_seconds INTEGER DEFAULT 3600,
+                threshold INTEGER DEFAULT 5,
+                severity TEXT DEFAULT 'Medium',
+                enabled BOOLEAN DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # NEW: Correlated Events Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS correlated_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                correlation_rule_id INTEGER,
+                log_ids TEXT NOT NULL,
+                event_count INTEGER,
+                first_event_time TEXT,
+                last_event_time TEXT,
+                severity TEXT,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (correlation_rule_id) REFERENCES correlation_rules(id)
+            )
+        """)
+
+        # NEW: Compliance Reports Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS compliance_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_type TEXT NOT NULL,
+                report_period_start TEXT,
+                report_period_end TEXT,
+                total_events INTEGER,
+                critical_events INTEGER,
+                high_events INTEGER,
+                medium_events INTEGER,
+                low_events INTEGER,
+                compliance_score INTEGER,
+                generated_by TEXT,
+                file_path TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create indexes for new tables
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_enrichment_log_id ON alert_enrichment(log_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_enrichment_threat_score ON alert_enrichment(threat_score)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_hosts_hostname ON hosts(hostname)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_hosts_risk_score ON hosts(risk_score)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_threat_intel_indicator ON threat_intel_cache(indicator)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_actions_status ON response_actions(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_correlated_events_rule_id ON correlated_events(correlation_rule_id)")
+
+        # Insert default correlation rules
+        cursor.execute("""
+            INSERT OR IGNORE INTO correlation_rules
+            (rule_name, rule_description, rule_pattern, time_window_seconds, threshold, severity)
+            VALUES
+            ('Brute Force Detection', 'Multiple failed login attempts followed by success', 'failed.*login', 300, 5, 'High'),
+            ('Port Scan Detection', 'Multiple port connection attempts from same IP', 'port.*scan|connection.*refused', 60, 10, 'Medium'),
+            ('Data Exfiltration Pattern', 'Large data transfer to unusual destination', 'transfer|upload|exfiltration', 600, 3, 'Critical'),
+            ('Privilege Escalation Chain', 'User privilege changes followed by suspicious activity', 'privilege|escalation|sudo|root', 1800, 3, 'Critical'),
+            ('Malware Propagation', 'Similar malware detections across multiple hosts', 'malware|virus|trojan', 3600, 3, 'High')
+        """)
+
         conn.commit()
-        logger.info("Database initialized successfully")
+        logger.info("Database initialized successfully with all feature tables")
 
 def check_db_health() -> bool:
     try:
@@ -343,6 +502,256 @@ def update_global_counts():
 
             cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status='PROCESSED'")
             PROCESSED_LOGS_COUNT = cursor.fetchone()[0]
+
+# ==============================================================================
+# 8b. NEW FEATURE HELPER FUNCTIONS
+# ==============================================================================
+
+def extract_ip_from_log(log_message: str) -> Optional[str]:
+    """Extract source IP address from log message"""
+    ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+    ip_match = re.search(ip_pattern, log_message)
+    return ip_match.group(0) if ip_match else None
+
+def calculate_threat_score(severity: str, is_known_threat: bool, similar_count: int) -> int:
+    """Calculate threat score (0-100) based on multiple factors"""
+    base_scores = {
+        "Critical": 90,
+        "High": 70,
+        "Medium": 40,
+        "Low": 10,
+        "Unknown": 20
+    }
+
+    score = base_scores.get(severity, 20)
+
+    # Boost score if known threat
+    if is_known_threat:
+        score = min(100, score + 20)
+
+    # Boost score based on similar incidents
+    score = min(100, score + (similar_count * 2))
+
+    return score
+
+def map_to_mitre_attack(event_type: str, raw_log: str) -> tuple:
+    """Map event type to MITRE ATT&CK framework"""
+    mitre_mappings = {
+        "Brute Force": ("Initial Access", "T1110 - Brute Force"),
+        "Port Scan": ("Reconnaissance", "T1046 - Network Service Discovery"),
+        "Malware": ("Execution", "T1204 - User Execution"),
+        "Privilege Escalation": ("Privilege Escalation", "T1068 - Exploitation for Privilege Escalation"),
+        "SQL Injection": ("Initial Access", "T1190 - Exploit Public-Facing Application"),
+        "XSS": ("Initial Access", "T1190 - Exploit Public-Facing Application"),
+        "Data Exfiltration": ("Exfiltration", "T1041 - Exfiltration Over C2 Channel"),
+        "Backdoor": ("Persistence", "T1543 - Create or Modify System Process"),
+        "DDoS": ("Impact", "T1498 - Network Denial of Service"),
+        "Ransomware": ("Impact", "T1486 - Data Encrypted for Impact")
+    }
+
+    for key, (tactic, technique) in mitre_mappings.items():
+        if key.lower() in event_type.lower() or key.lower() in raw_log.lower():
+            return (tactic, technique)
+
+    return ("Unknown", "Unknown")
+
+def check_threat_intel(indicator: str, indicator_type: str = "ip") -> Dict[str, Any]:
+    """
+    Check threat intelligence for an indicator (IP, domain, hash)
+    Returns cached result if available, otherwise returns unknown
+    Note: Actual threat intel integration requires API keys
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT is_malicious, threat_score, threat_type, source
+            FROM threat_intel_cache
+            WHERE indicator = ? AND indicator_type = ?
+        """, (indicator, indicator_type))
+
+        result = cursor.fetchone()
+
+        if result:
+            return {
+                "is_malicious": bool(result[0]),
+                "threat_score": result[1],
+                "threat_type": result[2],
+                "source": result[3]
+            }
+
+        # Return unknown if not in cache
+        return {
+            "is_malicious": False,
+            "threat_score": 0,
+            "threat_type": "Unknown",
+            "source": "Not Checked"
+        }
+
+def update_host_info(hostname: str, risk_score: int = None):
+    """Update or create host information"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Check if host exists
+        cursor.execute("SELECT id, total_alerts FROM hosts WHERE hostname = ?", (hostname,))
+        host = cursor.fetchone()
+
+        now = datetime.datetime.now().isoformat()
+
+        if host:
+            # Update existing host
+            new_alert_count = host[1] + 1
+            cursor.execute("""
+                UPDATE hosts
+                SET total_alerts = ?,
+                    last_seen = ?,
+                    risk_score = COALESCE(?, risk_score)
+                WHERE hostname = ?
+            """, (new_alert_count, now, risk_score, hostname))
+        else:
+            # Create new host
+            cursor.execute("""
+                INSERT INTO hosts (hostname, total_alerts, first_seen, last_seen, risk_score)
+                VALUES (?, 1, ?, ?, ?)
+            """, (hostname, now, now, risk_score or 50))
+
+        conn.commit()
+
+def enrich_alert(log_id: int, raw_log: str, severity: str, event_type: str, host: str):
+    """Enrich alert with additional intelligence and context"""
+    source_ip = extract_ip_from_log(raw_log)
+
+    # Check threat intelligence
+    threat_info = {"is_malicious": False, "threat_score": 0, "source": "None"}
+    if source_ip:
+        threat_info = check_threat_intel(source_ip, "ip")
+
+    # Map to MITRE ATT&CK
+    mitre_tactic, mitre_technique = map_to_mitre_attack(event_type, raw_log)
+
+    # Count similar incidents
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_logs
+            WHERE event_type = ? AND timestamp > datetime('now', '-24 hours')
+        """, (event_type,))
+        similar_count = cursor.fetchone()[0]
+
+        # Calculate threat score
+        threat_score = calculate_threat_score(
+            severity,
+            threat_info["is_malicious"],
+            similar_count
+        )
+
+        # Insert enrichment data
+        cursor.execute("""
+            INSERT OR REPLACE INTO alert_enrichment
+            (log_id, threat_score, mitre_attack_tactic, mitre_attack_technique,
+             source_ip, is_known_threat, threat_intel_source, similar_incidents_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log_id,
+            threat_score,
+            mitre_tactic,
+            mitre_technique,
+            source_ip,
+            threat_info["is_malicious"],
+            threat_info["source"],
+            similar_count
+        ))
+
+        conn.commit()
+
+    # Update host information
+    update_host_info(host, threat_score)
+
+def run_correlation_engine():
+    """Run correlation engine to detect multi-stage attacks"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get enabled correlation rules
+        cursor.execute("SELECT * FROM correlation_rules WHERE enabled = 1")
+        rules = cursor.fetchall()
+
+        for rule in rules:
+            rule_id = rule[0]
+            rule_pattern = rule[3]
+            time_window = rule[4]
+            threshold = rule[5]
+            severity = rule[6]
+
+            # Find matching logs within time window
+            cursor.execute("""
+                SELECT id, timestamp, raw_log
+                FROM raw_logs
+                WHERE raw_log LIKE ?
+                AND timestamp > datetime('now', '-' || ? || ' seconds')
+                ORDER BY timestamp DESC
+            """, (f"%{rule_pattern}%", time_window))
+
+            matching_logs = cursor.fetchall()
+
+            # If threshold exceeded, create correlated event
+            if len(matching_logs) >= threshold:
+                log_ids = ",".join([str(log[0]) for log in matching_logs])
+                first_event = matching_logs[-1][1]
+                last_event = matching_logs[0][1]
+
+                cursor.execute("""
+                    INSERT INTO correlated_events
+                    (correlation_rule_id, log_ids, event_count, first_event_time, last_event_time, severity, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    rule_id,
+                    log_ids,
+                    len(matching_logs),
+                    first_event,
+                    last_event,
+                    severity,
+                    f"Correlation rule triggered: {rule[1]} - {len(matching_logs)} events detected"
+                ))
+
+        conn.commit()
+
+def get_ai_learning_stats() -> Dict[str, Any]:
+    """Get statistics about AI learning progress"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Total learned patterns
+        cursor.execute("SELECT COUNT(*) FROM ai_knowledge")
+        total_patterns = cursor.fetchone()[0]
+
+        # Logs analyzed by knowledge base
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE analyzed_by = 'knowledge_base'")
+        kb_analyzed = cursor.fetchone()[0]
+
+        # Recent corrections (last 24h)
+        cursor.execute("""
+            SELECT COUNT(*) FROM ai_knowledge
+            WHERE updated_at > datetime('now', '-24 hours')
+        """)
+        recent_corrections = cursor.fetchone()[0]
+
+        # Most corrected event types
+        cursor.execute("""
+            SELECT corrected_severity, COUNT(*) as count
+            FROM ai_knowledge
+            GROUP BY corrected_severity
+            ORDER BY count DESC
+            LIMIT 5
+        """)
+        top_corrections = cursor.fetchall()
+
+        return {
+            "total_patterns": total_patterns,
+            "kb_analyzed_logs": kb_analyzed,
+            "recent_corrections_24h": recent_corrections,
+            "top_corrections": [{"severity": row[0], "count": row[1]} for row in top_corrections]
+        }
 
 # ==============================================================================
 # 9. Log Ingestor
@@ -540,9 +949,16 @@ def processor_loop():
                         # Update global counts
                         update_global_counts()
 
+                        # NEW: Enrich alert with threat intelligence and context
+                        try:
+                            severity = analysis.get('severity', 'Unknown')
+                            event_type = analysis.get('event_type', 'Unknown')
+                            enrich_alert(log_id, raw_log, severity, event_type, extracted_host)
+                            logger.debug(f"✓ Enriched log {log_id} with threat intelligence")
+                        except Exception as enrich_error:
+                            logger.warning(f"⚠️ Alert enrichment failed for log {log_id}: {enrich_error}")
+
                         # Log success
-                        severity = analysis.get('severity', 'Unknown')
-                        event_type = analysis.get('event_type', 'Unknown')
                         logger.info(f"✅ Processed log {log_id} - {severity} - {event_type} - Host: {extracted_host}")
 
                         break  # Success - exit retry loop
@@ -571,6 +987,13 @@ def processor_loop():
                         else:
                             # Wait before retry (exponential backoff)
                             time.sleep(2 ** attempt)
+
+            # NEW: Run correlation engine after each batch
+            try:
+                run_correlation_engine()
+                logger.debug("✓ Correlation engine executed")
+            except Exception as corr_error:
+                logger.warning(f"⚠️ Correlation engine error: {corr_error}")
 
         except KeyboardInterrupt:
             logger.info("⚠️ Processor loop interrupted by user")
@@ -1051,6 +1474,423 @@ Provide concise, actionable security advice. Be professional and helpful."""
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return {"response": f"Sorry, I encountered an error: {str(e)[:100]}"}
+
+# ==============================================================================
+# 12b. NEW FEATURE API ENDPOINTS
+# ==============================================================================
+
+@app.get("/api/alert-enrichment/{log_id}")
+@limiter.limit("60/minute")
+async def get_alert_enrichment(request: Request, log_id: int):
+    """Get enrichment data for a specific alert"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ae.*, rl.raw_log, rl.severity, rl.event_type, rl.host
+            FROM alert_enrichment ae
+            JOIN raw_logs rl ON ae.log_id = rl.id
+            WHERE ae.log_id = ?
+        """, (log_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Alert enrichment not found")
+
+        return {
+            "log_id": row[1],
+            "threat_score": row[2],
+            "mitre_tactic": row[3],
+            "mitre_technique": row[4],
+            "geo_country": row[5],
+            "geo_city": row[6],
+            "source_ip": row[7],
+            "is_known_threat": bool(row[8]),
+            "threat_intel_source": row[9],
+            "similar_incidents_count": row[10],
+            "raw_log": row[13],
+            "severity": row[14],
+            "event_type": row[15],
+            "host": row[16]
+        }
+
+@app.get("/api/ai-learning-stats")
+@limiter.limit("60/minute")
+async def get_ai_stats(request: Request):
+    """Get AI learning progress statistics"""
+    stats = get_ai_learning_stats()
+    return stats
+
+@app.get("/api/hosts")
+@limiter.limit("100/minute")
+async def get_hosts(request: Request):
+    """Get all monitored hosts"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM hosts
+            ORDER BY risk_score DESC, total_alerts DESC
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
+
+    return [{
+        "id": row[0],
+        "hostname": row[1],
+        "ip_address": row[2],
+        "asset_classification": row[3],
+        "criticality": row[4],
+        "risk_score": row[5],
+        "total_alerts": row[6],
+        "last_seen": row[7],
+        "first_seen": row[8]
+    } for row in rows]
+
+@app.get("/api/hosts/{hostname}")
+@limiter.limit("60/minute")
+async def get_host_details(request: Request, hostname: str):
+    """Get detailed information about a specific host"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Host info
+        cursor.execute("SELECT * FROM hosts WHERE hostname = ?", (hostname,))
+        host = cursor.fetchone()
+
+        if not host:
+            raise HTTPException(status_code=404, detail="Host not found")
+
+        # Recent alerts for this host
+        cursor.execute("""
+            SELECT id, timestamp, severity, event_type, ai_summary
+            FROM raw_logs
+            WHERE host = ? AND status = 'PROCESSED'
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """, (hostname,))
+        alerts = cursor.fetchall()
+
+        return {
+            "host_info": {
+                "hostname": host[1],
+                "ip_address": host[2],
+                "asset_classification": host[3],
+                "criticality": host[4],
+                "risk_score": host[5],
+                "total_alerts": host[6],
+                "last_seen": host[7],
+                "first_seen": host[8]
+            },
+            "recent_alerts": [{
+                "id": alert[0],
+                "timestamp": alert[1],
+                "severity": alert[2],
+                "event_type": alert[3],
+                "summary": alert[4]
+            } for alert in alerts]
+        }
+
+@app.get("/api/incidents")
+@limiter.limit("100/minute")
+async def get_incidents(request: Request, status: str = None):
+    """Get all incidents, optionally filtered by status"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        if status:
+            cursor.execute("""
+                SELECT * FROM incidents
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT 100
+            """, (status,))
+        else:
+            cursor.execute("""
+                SELECT * FROM incidents
+                ORDER BY created_at DESC
+                LIMIT 100
+            """)
+
+        rows = cursor.fetchall()
+
+    return [{
+        "id": row[0],
+        "title": row[1],
+        "severity": row[2],
+        "status": row[3],
+        "assigned_to": row[4],
+        "primary_log_id": row[5],
+        "related_log_ids": row[6],
+        "mitre_tactics": row[7],
+        "created_at": row[8],
+        "updated_at": row[9],
+        "resolved_at": row[10]
+    } for row in rows]
+
+@app.get("/api/correlated-events")
+@limiter.limit("60/minute")
+async def get_correlated_events(request: Request):
+    """Get correlated security events"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ce.*, cr.rule_name, cr.rule_description
+            FROM correlated_events ce
+            JOIN correlation_rules cr ON ce.correlation_rule_id = cr.id
+            ORDER BY ce.created_at DESC
+            LIMIT 100
+        """)
+        rows = cursor.fetchall()
+
+    return [{
+        "id": row[0],
+        "rule_name": row[9],
+        "rule_description": row[10],
+        "event_count": row[3],
+        "first_event_time": row[4],
+        "last_event_time": row[5],
+        "severity": row[6],
+        "description": row[7],
+        "log_ids": row[2].split(",") if row[2] else [],
+        "created_at": row[8]
+    } for row in rows]
+
+@app.get("/api/threat-statistics")
+@limiter.limit("60/minute")
+async def get_threat_statistics(request: Request):
+    """Get threat statistics for charts and visualizations"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Last 24 hours by severity
+        cursor.execute("""
+            SELECT severity, COUNT(*) as count
+            FROM raw_logs
+            WHERE timestamp > datetime('now', '-24 hours')
+            AND status = 'PROCESSED'
+            GROUP BY severity
+        """)
+        severity_counts = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Top event types
+        cursor.execute("""
+            SELECT event_type, COUNT(*) as count
+            FROM raw_logs
+            WHERE timestamp > datetime('now', '-24 hours')
+            AND status = 'PROCESSED'
+            GROUP BY event_type
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        top_events = [{"event_type": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+        # Most targeted hosts
+        cursor.execute("""
+            SELECT host, COUNT(*) as count, MAX(risk_score) as risk
+            FROM raw_logs rl
+            LEFT JOIN hosts h ON rl.host = h.hostname
+            WHERE rl.timestamp > datetime('now', '-24 hours')
+            AND rl.status = 'PROCESSED'
+            GROUP BY host
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        top_hosts = [{"host": row[0], "count": row[1], "risk_score": row[2] or 50} for row in cursor.fetchall()]
+
+        # Hourly trend (last 24 hours)
+        cursor.execute("""
+            SELECT strftime('%H', timestamp) as hour, severity, COUNT(*) as count
+            FROM raw_logs
+            WHERE timestamp > datetime('now', '-24 hours')
+            AND status = 'PROCESSED'
+            GROUP BY hour, severity
+            ORDER BY hour
+        """)
+        hourly_data = {}
+        for row in cursor.fetchall():
+            hour = row[0]
+            severity = row[1]
+            count = row[2]
+            if hour not in hourly_data:
+                hourly_data[hour] = {}
+            hourly_data[hour][severity] = count
+
+        return {
+            "severity_distribution": severity_counts,
+            "top_event_types": top_events,
+            "most_targeted_hosts": top_hosts,
+            "hourly_trend": hourly_data
+        }
+
+@app.get("/api/compliance-dashboard")
+@limiter.limit("30/minute")
+async def get_compliance_dashboard(request: Request):
+    """Get compliance metrics"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Last 30 days stats
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN severity = 'Critical' THEN 1 ELSE 0 END) as critical,
+                SUM(CASE WHEN severity = 'High' THEN 1 ELSE 0 END) as high,
+                SUM(CASE WHEN severity = 'Medium' THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN severity = 'Low' THEN 1 ELSE 0 END) as low
+            FROM raw_logs
+            WHERE timestamp > datetime('now', '-30 days')
+            AND status = 'PROCESSED'
+        """)
+        row = cursor.fetchone()
+
+        # Calculate compliance score (simplified)
+        total = row[0] or 1
+        critical = row[1] or 0
+        high = row[2] or 0
+
+        # Score decreases with more critical/high events
+        compliance_score = max(0, 100 - ((critical * 10) + (high * 5)))
+
+        return {
+            "period": "Last 30 Days",
+            "total_events": total,
+            "critical_events": critical,
+            "high_events": high,
+            "medium_events": row[3],
+            "low_events": row[4],
+            "compliance_score": compliance_score,
+            "status": "Compliant" if compliance_score >= 70 else "Non-Compliant"
+        }
+
+@app.post("/api/export-logs")
+@limiter.limit("10/minute")
+async def export_logs(request: Request):
+    """Export logs to CSV format"""
+    import csv
+    import io
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, timestamp, severity, event_type, host, raw_log, ai_summary
+            FROM raw_logs
+            WHERE status = 'PROCESSED'
+            ORDER BY timestamp DESC
+            LIMIT 1000
+        """)
+        rows = cursor.fetchall()
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ID', 'Timestamp', 'Severity', 'Event Type', 'Host', 'Raw Log', 'AI Summary'])
+
+    for row in rows:
+        writer.writerow(row)
+
+    output.seek(0)
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=security_logs_export.csv"}
+    )
+
+@app.post("/api/create-incident")
+@limiter.limit("20/minute")
+async def create_incident(request: Request):
+    """Create a new incident from an alert"""
+    data = await request.json()
+
+    log_id = data.get('log_id')
+    title = data.get('title', 'Security Incident')
+    assigned_to = data.get('assigned_to', 'Unassigned')
+
+    if not log_id:
+        raise HTTPException(status_code=400, detail="log_id is required")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get log details
+        cursor.execute("SELECT severity, event_type FROM raw_logs WHERE id = ?", (log_id,))
+        log = cursor.fetchone()
+
+        if not log:
+            raise HTTPException(status_code=404, detail="Log not found")
+
+        # Get MITRE tactics
+        cursor.execute("SELECT mitre_attack_tactic FROM alert_enrichment WHERE log_id = ?", (log_id,))
+        enrichment = cursor.fetchone()
+        mitre_tactics = enrichment[0] if enrichment else "Unknown"
+
+        # Create incident
+        cursor.execute("""
+            INSERT INTO incidents (title, severity, status, assigned_to, primary_log_id, mitre_tactics)
+            VALUES (?, ?, 'Open', ?, ?, ?)
+        """, (title, log[0], assigned_to, log_id, mitre_tactics))
+
+        incident_id = cursor.lastrowid
+        conn.commit()
+
+    logger.info(f"Created incident {incident_id} for log {log_id}")
+
+    return {
+        "status": "success",
+        "incident_id": incident_id,
+        "message": f"Incident created successfully"
+    }
+
+@app.get("/api/playbooks")
+@limiter.limit("30/minute")
+async def get_playbooks(request: Request):
+    """Get available incident response playbooks"""
+    playbooks = [
+        {
+            "id": 1,
+            "name": "Brute Force Response",
+            "description": "Block IP, notify admin, investigate source",
+            "severity": "High",
+            "steps": [
+                "Block source IP at firewall",
+                "Notify security team",
+                "Check for successful logins",
+                "Investigate user accounts",
+                "Document incident"
+            ]
+        },
+        {
+            "id": 2,
+            "name": "Malware Detection Response",
+            "description": "Isolate host, scan system, remediate",
+            "severity": "Critical",
+            "steps": [
+                "Isolate infected host from network",
+                "Run full system scan",
+                "Identify malware type",
+                "Remove malware",
+                "Check for lateral movement",
+                "Document and report"
+            ]
+        },
+        {
+            "id": 3,
+            "name": "Data Exfiltration Response",
+            "description": "Block connection, investigate data, contain breach",
+            "severity": "Critical",
+            "steps": [
+                "Block outbound connection",
+                "Identify exfiltrated data",
+                "Investigate compromised accounts",
+                "Check for additional backdoors",
+                "Notify stakeholders",
+                "Document incident"
+            ]
+        }
+    ]
+
+    return playbooks
 
 # ==============================================================================
 # 13. Graceful Shutdown
