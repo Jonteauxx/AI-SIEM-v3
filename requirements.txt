@@ -1,0 +1,39 @@
+# AI-SIEM v3 - Python Requirements
+# Python 3.9+ required
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# CORS and Rate Limiting
+slowapi==0.1.9
+
+# Data Validation
+pydantic==2.5.3
+
+# Database
+# Note: SQLite is included in Python standard library
+
+# Elasticsearch/OpenSearch Client
+elasticsearch==8.11.1
+
+# LLM Integration - Ollama
+ollama==0.1.6
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Data Serialization
+msgpack==1.0.7
+
+# Optional: For production deployments
+# gunicorn==21.2.0  # Production WSGI server
+# psycopg2-binary==2.9.9  # PostgreSQL adapter (if migrating from SQLite)
+
+# Development Dependencies (optional)
+# pytest==7.4.3
+# pytest-asyncio==0.21.1
+# black==23.12.1
+# flake8==7.0.0
+# mypy==1.8.0
