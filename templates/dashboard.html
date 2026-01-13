@@ -28,6 +28,9 @@
             background-color: var(--primary-bg);
             color: var(--text-color);
             overflow-x: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
         .header {
@@ -61,6 +64,7 @@
             padding: 15px 30px 0 30px;
             background-color: var(--primary-bg);
             border-bottom: 2px solid var(--border-color);
+            flex-shrink: 0;
         }
 
         .nav-tab {
@@ -87,25 +91,30 @@
 
         .tab-content {
             display: none;
-            padding: 30px;
+            padding: 20px 30px;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
         }
 
         .tab-content.active {
-            display: block;
+            display: flex;
+            flex-direction: column;
         }
 
         /* Metrics Grid */
         .metrics {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-shrink: 0;
         }
 
         .metric-card {
             background-color: var(--secondary-bg);
             border-radius: 8px;
-            padding: 20px;
+            padding: 12px 16px;
             border: 2px solid var(--border-color);
             transition: all 0.2s;
             cursor: pointer;
@@ -118,42 +127,48 @@
         }
 
         .metric-label {
-            font-size: 0.9em;
+            font-size: 0.8em;
             opacity: 0.8;
-            margin-bottom: 8px;
+            margin-bottom: 5px;
         }
 
         .metric-value {
-            font-size: 2.5em;
+            font-size: 1.8em;
             font-weight: bold;
             color: var(--active-color);
         }
 
         .metric-trend {
-            font-size: 0.85em;
-            margin-top: 8px;
+            font-size: 0.75em;
+            margin-top: 5px;
             opacity: 0.7;
         }
 
         /* Charts */
         .charts-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-shrink: 0;
         }
 
         .chart-container {
             background-color: var(--secondary-bg);
             border-radius: 8px;
-            padding: 20px;
+            padding: 12px;
             border: 2px solid var(--border-color);
+            height: 180px;
+        }
+
+        .chart-container canvas {
+            max-height: 140px !important;
         }
 
         .chart-title {
-            font-size: 1.1em;
+            font-size: 0.9em;
             font-weight: bold;
-            margin-bottom: 15px;
+            margin-bottom: 8px;
             color: var(--active-color);
         }
 
@@ -161,9 +176,19 @@
         .data-table {
             background-color: var(--secondary-bg);
             border-radius: 8px;
-            padding: 20px;
+            padding: 15px;
             border: 2px solid var(--border-color);
             overflow: hidden;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        #logs-container {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
         }
 
         .table-header {
@@ -392,6 +417,220 @@
             background: var(--active-color);
             border-radius: 5px;
         }
+
+        /* Floating Chatbot */
+        .chatbot-toggle {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: var(--active-color);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(0, 255, 115, 0.4);
+            z-index: 999;
+            transition: all 0.3s;
+        }
+
+        .chatbot-toggle:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(0, 255, 115, 0.6);
+        }
+
+        .chatbot-panel {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            width: 380px;
+            height: 500px;
+            background: var(--secondary-bg);
+            border: 2px solid var(--active-color);
+            border-radius: 12px;
+            display: none;
+            flex-direction: column;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            z-index: 998;
+        }
+
+        .chatbot-panel.active {
+            display: flex;
+        }
+
+        .chat-header {
+            padding: 15px;
+            background: var(--active-color);
+            color: var(--primary-bg);
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-close {
+            cursor: pointer;
+            font-size: 1.5em;
+            transition: all 0.2s;
+        }
+
+        .chat-close:hover {
+            transform: scale(1.2);
+        }
+
+        .chat-body {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            background: var(--primary-bg);
+        }
+
+        .chat-input-container {
+            padding: 15px;
+            border-top: 2px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input-container input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--primary-bg);
+            color: var(--text-color);
+        }
+
+        .chat-input-container input:focus {
+            outline: none;
+            border-color: var(--active-color);
+        }
+
+        .chat-input-container button {
+            padding: 10px 20px;
+            background: var(--active-color);
+            color: var(--primary-bg);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .chat-message {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+            font-size: 0.9em;
+        }
+
+        .chat-user {
+            background: var(--active-color);
+            color: var(--primary-bg);
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .chat-ai {
+            background: var(--secondary-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .typing-indicator {
+            display: inline-block;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--active-color);
+            margin: 0 3px;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 1; }
+            30% { transform: translateY(-10px); opacity: 0.7; }
+        }
+
+        /* Severity Change Buttons */
+        .severity-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .severity-btn {
+            padding: 8px 16px;
+            border: 2px solid var(--border-color);
+            background: var(--primary-bg);
+            color: var(--text-color);
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .severity-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .severity-btn.low { border-color: var(--low-severity); }
+        .severity-btn.low:hover, .severity-btn.low.active {
+            background: var(--low-severity);
+            color: white;
+        }
+
+        .severity-btn.medium { border-color: var(--medium-severity); }
+        .severity-btn.medium:hover, .severity-btn.medium.active {
+            background: var(--medium-severity);
+            color: var(--primary-bg);
+        }
+
+        .severity-btn.high { border-color: var(--high-severity); }
+        .severity-btn.high:hover, .severity-btn.high.active {
+            background: var(--high-severity);
+            color: white;
+        }
+
+        .severity-btn.critical { border-color: var(--critical-severity); }
+        .severity-btn.critical:hover, .severity-btn.critical.active {
+            background: var(--critical-severity);
+            color: white;
+        }
+
+        .learn-message {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 255, 115, 0.1);
+            border-left: 3px solid var(--active-color);
+            border-radius: 4px;
+            font-size: 0.9em;
+            display: none;
+        }
+
+        .learn-message.show {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -613,6 +852,32 @@
             <div id="modalBody">
                 <div class="loading">Loading...</div>
             </div>
+        </div>
+    </div>
+
+    <!-- Floating Chatbot -->
+    <button class="chatbot-toggle" onclick="toggleChatbot()" title="AI SOC Assistant">
+        🤖
+    </button>
+
+    <div id="chatbotPanel" class="chatbot-panel">
+        <div class="chat-header">
+            <span>🤖 AI SOC Assistant</span>
+            <span class="chat-close" onclick="toggleChatbot()">×</span>
+        </div>
+        <div class="chat-body" id="chatBody">
+            <div class="chat-message chat-ai">
+                👋 Hello! I'm your AI SOC Assistant. I can help you analyze security incidents, explain log patterns, and provide recommendations. How can I assist you today?
+            </div>
+        </div>
+        <div class="chat-input-container">
+            <input
+                type="text"
+                id="chatInput"
+                placeholder="Ask me about security logs..."
+                onkeydown="if(event.key === 'Enter') sendChatMessage()"
+            >
+            <button onclick="sendChatMessage()">Send</button>
         </div>
     </div>
 
@@ -893,6 +1158,8 @@
                 }
 
                 // Build modal content
+                const currentSeverity = (log.Severity || 'Unknown').toLowerCase();
+
                 let html = `
                     <div class="enrichment-grid">
                         <div class="enrichment-card">
@@ -901,9 +1168,16 @@
                         </div>
                         <div class="enrichment-card">
                             <div class="enrichment-label">⚠️ Severity</div>
-                            <div class="enrichment-value">
+                            <div class="enrichment-value" id="severity-display">
                                 <span class="badge badge-${(log.Severity || '').toLowerCase()}">${log.Severity || 'Unknown'}</span>
                             </div>
+                            <div class="severity-buttons">
+                                <button class="severity-btn low ${currentSeverity === 'low' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Low')">Low</button>
+                                <button class="severity-btn medium ${currentSeverity === 'medium' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Medium')">Medium</button>
+                                <button class="severity-btn high ${currentSeverity === 'high' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'High')">High</button>
+                                <button class="severity-btn critical ${currentSeverity === 'critical' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Critical')">Critical</button>
+                            </div>
+                            <div class="learn-message" id="learn-message"></div>
                         </div>
                         <div class="enrichment-card">
                             <div class="enrichment-label">🖥️ Host</div>
@@ -1308,6 +1582,139 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeModal();
         });
+
+        // Toggle Chatbot
+        function toggleChatbot() {
+            const panel = document.getElementById('chatbotPanel');
+            panel.classList.toggle('active');
+        }
+
+        // Format AI Response
+        function formatAIResponse(text) {
+            text = text.replace(/```[\s\S]*?```/g, '');
+
+            let lines = text.split('\n');
+            let formatted = '';
+            let inList = false;
+
+            lines.forEach(line => {
+                line = line.trim();
+                if (!line) return;
+
+                if (line.match(/^[-*•]\s/) || line.match(/^\d+\.\s/)) {
+                    if (!inList) {
+                        formatted += '<ul>';
+                        inList = true;
+                    }
+                    let content = line.replace(/^[-*•]\s/, '').replace(/^\d+\.\s/, '');
+                    formatted += `<li>${content}</li>`;
+                } else {
+                    if (inList) {
+                        formatted += '</ul>';
+                        inList = false;
+                    }
+                    if (line.endsWith(':') && line.length < 60) {
+                        formatted += `<strong>${line}</strong>`;
+                    } else {
+                        formatted += `${line}<br>`;
+                    }
+                }
+            });
+
+            if (inList) {
+                formatted += '</ul>';
+            }
+
+            return formatted || text;
+        }
+
+        // Send Chat Message
+        async function sendChatMessage() {
+            const inputField = document.getElementById('chatInput');
+            const chatBody = document.getElementById('chatBody');
+            const message = inputField.value.trim();
+
+            if (!message) return;
+
+            const userMsg = document.createElement('div');
+            userMsg.className = 'chat-message chat-user';
+            userMsg.textContent = message;
+            chatBody.appendChild(userMsg);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            inputField.value = '';
+
+            const typingMsg = document.createElement('div');
+            typingMsg.className = 'chat-message chat-ai';
+            typingMsg.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            chatBody.appendChild(typingMsg);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: message })
+                });
+
+                const data = await response.json();
+                typingMsg.innerHTML = formatAIResponse(data.response || 'Sorry, I could not generate a response.');
+
+            } catch (error) {
+                console.error('Chat error:', error);
+                typingMsg.innerHTML = '⚠️ Error: Could not connect to AI. Please check if Ollama is running.';
+                typingMsg.style.backgroundColor = 'var(--high-severity)';
+                typingMsg.style.color = 'white';
+            }
+
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        // Change Severity and AI Learning
+        async function changeSeverity(logId, newSeverity) {
+            const learnMsg = document.getElementById('learn-message');
+
+            document.querySelectorAll('.severity-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            try {
+                const response = await fetch(`${API_BASE}/learn`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        log_id: logId,
+                        new_severity: newSeverity,
+                        reason: `User corrected severity to ${newSeverity} via dashboard`
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    learnMsg.textContent = `✅ AI learned! Similar logs will be classified as ${newSeverity}.`;
+                    learnMsg.classList.add('show');
+
+                    const severityDisplay = document.getElementById('severity-display');
+                    const severityClass = newSeverity.toLowerCase();
+                    severityDisplay.innerHTML = `<span class="badge badge-${severityClass}">${newSeverity}</span>`;
+
+                    setTimeout(() => {
+                        loadData();
+                    }, 2000);
+                } else {
+                    learnMsg.textContent = '⚠️ Failed to update AI knowledge base.';
+                    learnMsg.style.backgroundColor = 'rgba(255, 77, 77, 0.1)';
+                    learnMsg.style.borderColor = 'var(--high-severity)';
+                    learnMsg.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Error learning severity:', error);
+                learnMsg.textContent = '❌ Error updating severity. Please try again.';
+                learnMsg.style.backgroundColor = 'rgba(255, 77, 77, 0.1)';
+                learnMsg.style.borderColor = 'var(--high-severity)';
+                learnMsg.classList.add('show');
+            }
+        }
     </script>
 </body>
 </html>
