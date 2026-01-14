@@ -1,416 +1,347 @@
-# AI-SIEM v3 - AI-Powered Security Information and Event Management
+# AXS ICT Hybrid SOC Agent v2.0
 
-An intelligent SIEM system that leverages Large Language Models (LLMs) to automatically analyze, classify, and provide actionable insights on security logs in real-time.
+AI-aangedreven Beveiligingslog Analyse Platform met Machine Learning mogelijkheden.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
-![Python](https://img.shields.io/badge/python-3.9+-green)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109-teal)
-![License](https://img.shields.io/badge/license-MIT-yellow)
+## Functies
 
-## Features
+- **Real-time Log Analyse** - Analyseert beveiligingslogs met behulp van Ollama LLM
+- **Lerend Systeem** - Leert van gebruikersfeedback om nauwkeurigheid te verbeteren
+- **Live Dashboard** - Real-time statistieken en log visualisatie
+- **Auto-Indexering** - Indexeert geanalyseerde logs automatisch naar OpenSearch
+- **Dreigingsdetectie** - Identificeert beveiligingsdreigingen en anomalieën
+- **Patroonherkenning** - Onthoudt en hergebruikt geleerde logpatronen
 
-### Core Capabilities
-- **AI-Powered Log Analysis**: Uses Ollama (Mistral 7B) for intelligent log classification
-- **Real-Time Processing**: Background threads process logs as they arrive
-- **Automated Severity Classification**: Categorizes logs as Low, Medium, High, or Critical
-- **Continuous Learning**: AI learns from user feedback to improve accuracy
-- **Pattern Recognition**: Caches learned patterns for instant classification
-- **Interactive Dashboard**: Modern web interface with live metrics
-- **AI SOC Assistant**: Built-in chatbot for security analysis queries
-- **Multi-Source Support**: Ingests logs via FluentD (TCP/msgpack)
-
-### Technical Features
-- **Fast API Backend**: Asynchronous Python web framework
-- **Dual Storage**: SQLite for metadata + OpenSearch for log search (optional)
-- **Rate Limiting**: Protection against API abuse
-- **Health Monitoring**: Comprehensive health checks for all components
-- **Graceful Degradation**: Continues operating when optional services are down
-- **Retry Logic**: Exponential backoff for failed operations
-
-## Architecture
+## Architectuur
 
 ```
-┌─────────────────┐
-│  Log Sources    │ (Servers, Firewalls, Apps)
-└────────┬────────┘
-         │
-    ┌────▼────┐
-    │ FluentD │ (Log Collector)
-    └────┬────┘
-         │ TCP/msgpack (Port 5046)
-         │
-┌────────▼─────────────────────────────────────────┐
-│              AI-SIEM Application                  │
-│                                                   │
-│  ┌──────────────┐      ┌────────────────┐        │
-│  │   Ingestor   │─────▶│   Processor    │        │
-│  │  (TCP/5046)  │      │  (AI Analysis) │        │
-│  └──────────────┘      └────────┬───────┘        │
-│                                  │                │
-│  ┌──────────────┐      ┌────────▼───────┐        │
-│  │    Ollama    │◀─────│   Knowledge    │        │
-│  │  (Mistral)   │      │      Base      │        │
-│  └──────────────┘      └────────────────┘        │
-│                                  │                │
-│  ┌──────────────┐      ┌────────▼───────┐        │
-│  │  OpenSearch  │◀─────│    SQLite      │        │
-│  │  (Optional)  │      │   (Primary)    │        │
-│  └──────────────┘      └────────────────┘        │
-│                                  │                │
-│         ┌────────────────────────▼──────┐         │
-│         │   FastAPI REST API            │         │
-│         │   (Port 8000)                 │         │
-│         └────────────────────┬──────────┘         │
-└──────────────────────────────┼────────────────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │   Web Dashboard     │
-                    │  (HTML/JS/CSS)      │
-                    └─────────────────────┘
+Fluentd/Logs → TCP Ingestor (Poort 5046)
+                    ↓
+              SQLite Wachtrij (PENDING)
+                    ↓
+              AI Processor (Ollama LLM)
+                    ↓
+         OpenSearch/Elasticsearch (Geïndexeerd)
+                    ↓
+            FastAPI Dashboard (Poort 8000)
 ```
 
-## Prerequisites
+## Vereisten
 
-### Required
-- **Python 3.9+**
-- **Ollama** with Mistral 7B model
-  ```bash
-  # Install Ollama from https://ollama.ai
-  ollama pull mistral:7b
-  ```
+1. **Python 3.9+**
+2. **Ollama** - [Installeren via ollama.ai](https://ollama.ai)
+3. **OpenSearch/Elasticsearch** - Draaiende instantie
+4. **Fluentd** (optioneel) - Voor log doorsturen
 
-### Optional
-- **OpenSearch/Elasticsearch** for advanced log search
-- **FluentD** for log collection
+## Installatie
 
-## Quick Start
+### 1. Klonen en Opzetten
 
-### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/AI-SIEM-v3.git
-cd AI-SIEM-v3
-```
+# Kloon de repository
+git clone <jouw-repo>
+cd soc-agent
 
-### 2. Set Up Python Environment
-```bash
+# Maak virtuele omgeving aan
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  # Op Windows: venv\Scripts\activate
+
+# Installeer afhankelijkheden
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
+### 2. Omgeving Configureren
+
 ```bash
+# Kopieer voorbeeld omgevingsbestand
 cp .env.example .env
-# Edit .env with your configuration
+
+# Bewerk .env met jouw instellingen
+nano .env
 ```
 
-### 4. Start Ollama
+### 3. Ollama Model Installeren
+
 ```bash
-ollama serve
-# In another terminal:
+# Installeer het Mistral 7B model (of jouw voorkeurmodel)
 ollama pull mistral:7b
+
+# Controleer of het werkt
+ollama list
 ```
 
-### 5. Run the Application
+### 4. OpenSearch/Elasticsearch Opzetten
+
+Zorg ervoor dat je OpenSearch/Elasticsearch instantie draait en bereikbaar is:
+
+```bash
+# Test verbinding
+curl http://10.10.200.105:9201
+```
+
+## Applicatie Starten
+
+### Start de SOC Agent
+
 ```bash
 python main.py
 ```
 
-### 6. Access the Dashboard
-Open your browser to: http://localhost:8000
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file (see `.env.example` for all options):
-
-```env
-# Essential Configuration
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=mistral:7b
-API_PORT=8000
-LISTEN_PORT=5046
-
-# Optional: OpenSearch
-ES_HOSTS=http://localhost:9200
-ES_INDEX=ai-analyzed-logs
-
-# Optional: Database
-DB_NAME=ai_agent_logs.db
+Je zou moeten zien:
+```
+INFO - Starting AXS ICT Hybrid SOC Agent v2.0.0
+INFO - Configuration validated successfully
+INFO - Database initialized successfully
+INFO - Created index: ai-analyzed-logs
+INFO - TCP Ingestor listening on 0.0.0.0:5046
+INFO - Processor loop started
+INFO - Starting API server on 0.0.0.0:8000
 ```
 
-### FluentD Configuration
+### Toegang tot het Dashboard
 
-To forward logs to AI-SIEM, add this to your FluentD config:
+Open je browser naar: **http://localhost:8000**
+
+## API Eindpunten
+
+### Gezondheidscontrole
+```bash
+GET /health
+```
+
+### Dashboard Statistieken
+```bash
+GET /api/dashboard-metrics
+```
+
+### Logs Ophalen
+```bash
+GET /api/logs?panel=Active%20Alerts
+```
+
+Panelen: `Total Logs`, `Active Alerts`, `Threats Blocked`
+
+### Leren van Feedback
+```bash
+POST /api/learn
+Content-Type: application/json
+
+{
+  "log_id": 123,
+  "new_severity": "High",
+  "reason": "Dit is eigenlijk een brute force poging"
+}
+```
+
+### Kennisbank Bekijken
+```bash
+GET /api/knowledge-base
+```
+
+## Logs Versturen naar de Agent
+
+### Met Fluentd
+
+Configureer Fluentd om logs door te sturen:
 
 ```xml
-<match syslog.**>
+<match **>
   @type forward
   <server>
-    host localhost
+    host 127.0.0.1
     port 5046
   </server>
-  <buffer>
-    flush_interval 5s
-  </buffer>
 </match>
 ```
 
-## Usage
+### Met Python Script
 
-### Dashboard Overview
+```python
+import socket
+import msgpack
 
-The dashboard provides 7 key metrics:
-1. **Total Logs**: All logs ingested
-2. **Pending**: Logs awaiting analysis
-3. **Processed**: Logs analyzed by AI
-4. **Active Alerts**: High/Critical severity events
-5. **Threats Blocked**: Detected attack patterns
-6. **AI Learned Patterns**: User-corrected classifications
-7. **System Status**: Health of LLM, API, and OpenSearch
+def send_log(message):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect(('localhost', 5046))
 
-### Analyzing Logs
+    data = msgpack.packb([
+        "tag.name",
+        [[time.time(), {"message": message}]]
+    ])
 
-1. Click any log row to view details
-2. Review AI analysis and recommended actions
-3. Correct severity if needed (AI learns from corrections)
-4. Chat with AI assistant for deeper analysis
+    sock.send(data)
+    sock.close()
 
-### Teaching the AI
+# Verstuur een test log
+send_log("Gebruiker login mislukt vanaf IP 192.168.1.100")
+```
 
-When the AI misclassifies a log:
-1. Open the log detail modal
-2. Select the correct severity button
-3. AI automatically learns the pattern
-4. Future similar logs will be classified correctly
+## Monitoring
 
-### API Endpoints
+### Systeemgezondheid Controleren
 
-#### Health Check
 ```bash
 curl http://localhost:8000/health
 ```
 
-#### Get Dashboard Metrics
+Respons:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-12-17T10:30:00",
+  "checks": {
+    "database": true,
+    "opensearch": true,
+    "ollama": true,
+    "ingestor": true
+  }
+}
+```
+
+### Logs Bekijken
+
 ```bash
-curl http://localhost:8000/api/dashboard-metrics
+# Bekijk applicatie logs
+tail -f soc_agent.log
+
+# Controleer verwerkte logs aantal
+curl http://localhost:8000/api/analysis-status
 ```
 
-#### Get All Logs
+## Configuratie Opties
+
+### Omgevingsvariabelen
+
+| Variabele | Standaard | Beschrijving |
+|-----------|-----------|--------------|
+| `ES_HOSTS` | `http://10.10.200.105:9201` | OpenSearch URL |
+| `ES_INDEX` | `ai-analyzed-logs` | Index naam |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
+| `OLLAMA_MODEL` | `mistral:7b` | Te gebruiken LLM model |
+| `LISTEN_PORT` | `5046` | TCP poort voor log ingestie |
+| `API_PORT` | `8000` | Web dashboard poort |
+| `MAX_RETRIES` | `3` | OpenSearch herhaalpogingen |
+
+### Aanbevolen Modellen
+
+- **mistral:7b** - Snel, goede balans (standaard)
+- **llama2:13b** - Betere nauwkeurigheid, langzamer
+- **codellama:7b** - Goed voor technische logs
+- **mixtral:8x7b** - Beste kwaliteit, vereist meer bronnen
+
+## Probleemoplossing
+
+### Ollama Verbinding Mislukt
+
 ```bash
-curl http://localhost:8000/api/logs-all
-```
+# Controleer of Ollama draait
+curl http://localhost:11434/api/version
 
-#### Chat with AI
-```bash
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What are the top threats today?"}'
-```
-
-#### Teach AI (Correct Severity)
-```bash
-curl -X POST http://localhost:8000/api/learn \
-  -H "Content-Type: application/json" \
-  -d '{
-    "log_id": 123,
-    "new_severity": "High",
-    "reason": "This is actually a brute force attempt"
-  }'
-```
-
-## Project Structure
-
-```
-AI-SIEM-v3/
-├── main.py                 # Core application (FastAPI + processing logic)
-├── templates/
-│   └── dashboard.html      # Web dashboard UI
-├── requirements.txt        # Python dependencies
-├── .env.example           # Configuration template
-├── .gitignore             # Git ignore rules
-├── CODE_REVIEW.md         # Detailed code analysis
-├── README.md              # This file
-├── ai_agent_logs.db       # SQLite database (created at runtime)
-└── soc_agent.log          # Application logs (created at runtime)
-```
-
-## Development
-
-### Running Tests
-```bash
-# Install dev dependencies
-pip install pytest pytest-asyncio
-
-# Run tests
-pytest
-```
-
-### Code Quality
-```bash
-# Format code
-black main.py
-
-# Lint code
-flake8 main.py
-
-# Type checking
-mypy main.py
-```
-
-## Deployment
-
-### Production Recommendations
-
-See `CODE_REVIEW.md` for comprehensive deployment guidance. Key recommendations:
-
-1. **Security**
-   - Implement authentication (JWT/OAuth2)
-   - Use HTTPS/TLS
-   - Restrict CORS origins
-   - Encrypt database at rest
-
-2. **Scalability**
-   - Migrate to PostgreSQL
-   - Use connection pooling
-   - Deploy on multiple instances
-   - Implement load balancing
-
-3. **Reliability**
-   - Set up automated backups
-   - Implement log retention policies
-   - Add alerting (email/Slack/PagerDuty)
-   - Monitor with Prometheus + Grafana
-
-4. **Docker Deployment**
-   ```bash
-   # Coming soon: Docker Compose configuration
-   docker-compose up -d
-   ```
-
-## Troubleshooting
-
-### Ollama Connection Failed
-```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
-
-# Restart Ollama
+# Herstart Ollama
 ollama serve
 ```
 
-### Database Locked Errors
+### OpenSearch Verbindingsproblemen
+
 ```bash
-# Stop application
-# Delete database (data will be lost)
-rm ai_agent_logs.db
-# Restart application
+# Controleer connectiviteit
+curl -X GET "http://10.10.200.105:9201/_cluster/health"
+
+# Controleer index
+curl -X GET "http://10.10.200.105:9201/ai-analyzed-logs/_search?size=1"
+```
+
+### Geen Logs Worden Verwerkt
+
+1. Controleer of logs worden ontvangen:
+   ```bash
+   sqlite3 ai_agent_logs.db "SELECT COUNT(*) FROM raw_logs WHERE status='PENDING'"
+   ```
+
+2. Controleer processor logs:
+   ```bash
+   grep "PROCESSOR" soc_agent.log
+   ```
+
+3. Verifieer dat Ollama reageert:
+   ```bash
+   ollama run mistral:7b "Test bericht"
+   ```
+
+### Hoog CPU Gebruik
+
+- Overweeg een kleiner model te gebruiken (bijv. `mistral:7b` in plaats van `mixtral:8x7b`)
+- Verklein de batch grootte in processor (verander LIMIT in query)
+- Voeg vertragingen toe tussen verwerkingsbatches
+
+## Beveiligingsoverwegingen
+
+1. **Wijzig standaard poorten** in productie
+2. **Schakel authenticatie in** op API eindpunten
+3. **Configureer CORS** correct in `main.py`
+4. **Gebruik HTTPS** met reverse proxy (nginx/traefik)
+5. **Beperk netwerktoegang** tot OpenSearch
+6. **Regelmatige backups** van SQLite database
+
+## Ontwikkeling
+
+### Draaien in Ontwikkelmodus
+
+```bash
+# Schakel debug logging in
+export LOG_LEVEL=DEBUG
 python main.py
 ```
 
-### Dashboard Not Loading
-```bash
-# Check if templates directory exists
-ls templates/dashboard.html
+### Tests Uitvoeren
 
-# Verify API is running
-curl http://localhost:8000/health
+```bash
+pytest tests/
 ```
 
-### Logs Not Being Processed
-```bash
-# Check processor thread status
-tail -f soc_agent.log
+## Prestatie Optimalisatie
 
-# Verify database has pending logs
-sqlite3 ai_agent_logs.db "SELECT COUNT(*) FROM raw_logs WHERE status='PENDING';"
+### Database Optimalisatie
+
+```sql
+-- Voeg indexen toe voor snellere queries
+CREATE INDEX idx_status ON raw_logs(status);
+CREATE INDEX idx_timestamp ON raw_logs(timestamp);
 ```
 
-## Roadmap
+### OpenSearch Optimalisatie
 
-### Version 2.1 (Planned)
-- [ ] Authentication & authorization
-- [ ] Email/Slack alerting
-- [ ] Log export (CSV/JSON/PDF)
-- [ ] Advanced filtering (date ranges, severity, host)
-- [ ] Freshdesk ticket integration
+```bash
+# Verhoog verversingsinterval
+PUT /ai-analyzed-logs/_settings
+{
+  "index": {
+    "refresh_interval": "30s"
+  }
+}
+```
 
-### Version 3.0 (Future)
-- [ ] Multi-tenancy support
-- [ ] Custom LLM fine-tuning
-- [ ] Automated incident response playbooks
-- [ ] Integration with SOAR platforms
-- [ ] Machine learning-based anomaly detection
-- [ ] Mobile application
+## Bijdragen
 
-## Performance
+1. Fork de repository
+2. Maak een feature branch (`git checkout -b feature/geweldige-feature`)
+3. Commit wijzigingen (`git commit -m 'Voeg geweldige feature toe'`)
+4. Push naar branch (`git push origin feature/geweldige-feature`)
+5. Open een Pull Request
 
-### Benchmarks (Single Instance)
-- **Log Ingestion**: 500-1000 logs/minute
-- **AI Processing**: 10-20 logs/minute (depends on LLM speed)
-- **API Response Time**: <100ms (cached queries)
-- **Dashboard Load Time**: <2 seconds
+## Licentie
 
-### Scalability
-- **SQLite**: Up to 100K logs efficiently
-- **PostgreSQL**: Millions of logs
-- **OpenSearch**: Billions of logs with proper sharding
+[Jouw Licentie Hier]
 
-## Contributing
+## Ondersteuning
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+Voor problemen en vragen:
+- GitHub Issues: [jouw-repo/issues]
+- E-mail: support@axs-ict.nl
+- Documentatie: [jouw-docs-url]
 
-## Known Issues
+## Met Dank Aan
 
-See `CODE_REVIEW.md` for detailed issue tracking.
-
-Critical issues have been fixed in v2.0.0:
-- Database schema mismatch (FIXED)
-- Template path error (FIXED)
-
-## License
-
-This project is licensed under the MIT License - see LICENSE file for details.
-
-## Support
-
-For issues and questions:
-- Check `CODE_REVIEW.md` for common problems
-- Review the troubleshooting section above
-- Open a GitHub issue
-
-## Acknowledgments
-
-- **Ollama** for providing local LLM inference
-- **FastAPI** for the excellent web framework
-- **OpenSearch** for powerful log search capabilities
-- **FluentD** for flexible log collection
-
-## Authors
-
-- **AXS ICT** - Initial work
-
-## Version History
-
-### v2.0.0 (2026-01-13)
-- AI-powered log analysis with Ollama
-- Interactive web dashboard
-- Real-time processing
-- Knowledge base learning system
-- Fixed critical database schema bug
-- Fixed template path issue
-- Added comprehensive documentation
-
-### v1.0.0 (Previous)
-- Basic log collection
-- Manual analysis
-
----
-
-**Made with by AXS ICT SOC Team**
+- Ollama voor lokale LLM mogelijkheden
+- FastAPI voor het web framework
+- OpenSearch voor log indexering
+- Fluentd voor log verzameling
