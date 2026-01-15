@@ -1129,25 +1129,36 @@
             padding: 20px;
             border-radius: 8px;
             border-left: 4px solid var(--active-color);
-            line-height: 1.7;
-            white-space: pre-wrap;
+            line-height: 1.5;
         }
 
-        .remediation-content h2 {
+        .remediation-content h4 {
             color: var(--active-color);
-            font-size: 1.1em;
-            margin: 15px 0 10px 0;
+            font-size: 0.95em;
+            margin: 14px 0 8px 0;
+            font-weight: 600;
         }
 
-        .remediation-content h2:first-child {
+        .remediation-content h4:first-of-type {
             margin-top: 0;
         }
 
+        .remediation-content ul {
+            margin: 6px 0;
+            padding-left: 18px;
+        }
+
+        .remediation-content li {
+            margin-bottom: 4px;
+            font-size: 0.9em;
+        }
+
         .remediation-content code {
-            background: var(--secondary-bg);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
+            background: rgba(0, 170, 85, 0.15);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
         }
 
         .remediation-content pre {
@@ -1155,7 +1166,8 @@
             padding: 10px;
             border-radius: 6px;
             overflow-x: auto;
-            margin: 10px 0;
+            margin: 8px 0;
+            font-size: 0.8em;
         }
 
         .btn-remediation {
@@ -2503,26 +2515,64 @@
 
                 const data = await response.json();
 
-                // Format the remediation content with markdown-like styling
-                let formattedContent = data.remediation_steps
-                    .replace(/## (.*?)(?=\n|$)/g, '<h4 style="color: var(--active-color); margin-top: 20px; margin-bottom: 10px;">$1</h4>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/`(.*?)`/g, '<code style="background: rgba(0,170,85,0.2); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
-                    .replace(/^\d+\.\s+(.*?)$/gm, '<li style="margin-left: 20px; margin-bottom: 8px;">$1</li>')
-                    .replace(/^-\s+(.*?)$/gm, '<li style="margin-left: 20px; margin-bottom: 8px; list-style-type: disc;">$1</li>')
-                    .replace(/\n\n/g, '<br><br>')
-                    .replace(/\n/g, '<br>');
+                // Format the remediation content with proper HTML structure
+                let text = data.remediation_steps;
+
+                // Process sections: split by ## headers
+                let sections = text.split(/(?=## )/);
+                let formattedContent = '';
+
+                sections.forEach(section => {
+                    if (!section.trim()) return;
+
+                    // Extract header
+                    let headerMatch = section.match(/^## (.*?)(?:\n|$)/);
+                    if (headerMatch) {
+                        formattedContent += `<h4>${headerMatch[1]}</h4>`;
+                        section = section.replace(/^## .*?\n/, '');
+                    }
+
+                    // Process list items
+                    let lines = section.split('\n').filter(l => l.trim());
+                    let inList = false;
+
+                    lines.forEach(line => {
+                        // Numbered or bullet list item
+                        let listMatch = line.match(/^[\d]+\.\s+(.*)$/) || line.match(/^[-*]\s+(.*)$/);
+                        if (listMatch) {
+                            if (!inList) {
+                                formattedContent += '<ul>';
+                                inList = true;
+                            }
+                            let content = listMatch[1]
+                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                .replace(/`(.*?)`/g, '<code>$1</code>');
+                            formattedContent += `<li>${content}</li>`;
+                        } else if (line.trim()) {
+                            if (inList) {
+                                formattedContent += '</ul>';
+                                inList = false;
+                            }
+                            let content = line
+                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                .replace(/`(.*?)`/g, '<code>$1</code>');
+                            formattedContent += `<p style="margin: 6px 0; font-size: 0.9em;">${content}</p>`;
+                        }
+                    });
+
+                    if (inList) formattedContent += '</ul>';
+                });
 
                 contentDiv.innerHTML = `
-                    <div style="margin-bottom: 15px;">
+                    <div style="margin-bottom: 12px;">
                         <span class="badge badge-${data.severity?.toLowerCase() || 'medium'}">${data.severity || 'Unknown'}</span>
-                        <span style="opacity: 0.7; margin-left: 10px;">Event Type: ${data.event_type || 'Unknown'}</span>
+                        <span style="opacity: 0.7; margin-left: 10px; font-size: 0.9em;">Event Type: ${data.event_type || 'Unknown'}</span>
                     </div>
                     <div class="remediation-steps">
                         ${formattedContent}
                     </div>
-                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color); opacity: 0.7; font-size: 0.85em;">
-                        ⚠️ Deze remediation stappen zijn AI-gegenereerd. Verifieer altijd voordat je acties uitvoert.
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); opacity: 0.6; font-size: 0.8em;">
+                        ⚠️ AI-gegenereerd. Verifieer altijd voordat je acties uitvoert.
                     </div>
                 `;
 
