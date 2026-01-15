@@ -1109,6 +1109,76 @@
         .sparkline-container canvas {
             max-height: 30px !important;
         }
+
+        /* Remediation Section */
+        .remediation-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid var(--border-color);
+        }
+
+        .remediation-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .remediation-content {
+            background: var(--primary-bg);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid var(--active-color);
+            line-height: 1.7;
+            white-space: pre-wrap;
+        }
+
+        .remediation-content h2 {
+            color: var(--active-color);
+            font-size: 1.1em;
+            margin: 15px 0 10px 0;
+        }
+
+        .remediation-content h2:first-child {
+            margin-top: 0;
+        }
+
+        .remediation-content code {
+            background: var(--secondary-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        .remediation-content pre {
+            background: var(--secondary-bg);
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .btn-remediation {
+            background: linear-gradient(135deg, var(--active-color) 0%, #00cc5c 100%);
+            color: var(--primary-bg);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .btn-remediation:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 255, 115, 0.4);
+        }
+
+        .btn-remediation:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body>
@@ -1198,25 +1268,6 @@
                 <div class="metric-label">Compliance Score</div>
                 <div class="metric-value" id="compliance-score">-</div>
                 <div class="metric-trend" id="compliance-status">-</div>
-            </div>
-        </div>
-
-        <!-- SOC Performance Metrics -->
-        <div class="soc-metrics">
-            <div class="soc-metric-card">
-                <div class="soc-metric-label">MTTD</div>
-                <div class="soc-metric-value" id="mttd-value">-</div>
-                <div class="soc-metric-trend">Mean Time to Detect</div>
-            </div>
-            <div class="soc-metric-card">
-                <div class="soc-metric-label">MTTR</div>
-                <div class="soc-metric-value" id="mttr-value">-</div>
-                <div class="soc-metric-trend">Mean Time to Respond</div>
-            </div>
-            <div class="soc-metric-card">
-                <div class="soc-metric-label">MTTA</div>
-                <div class="soc-metric-value" id="mtta-value">-</div>
-                <div class="soc-metric-trend">Mean Time to Acknowledge</div>
             </div>
         </div>
 
@@ -1395,7 +1446,7 @@
 
     <!-- Compliance Tab -->
     <div id="compliance-tab" class="tab-content">
-        <h2 style="margin-bottom: 20px; color: var(--active-color);">✅ Compliance Dashboard</h2>
+        <h2 style="margin-bottom: 20px; color: var(--active-color);">✅ Compliance & Performance</h2>
 
         <div class="metrics">
             <div class="metric-card">
@@ -1413,6 +1464,26 @@
             <div class="metric-card">
                 <div class="metric-label">Total Events (30d)</div>
                 <div class="metric-value" id="comp-total">-</div>
+            </div>
+        </div>
+
+        <!-- SOC Performance Metrics -->
+        <h3 style="margin: 20px 0 10px; color: var(--active-color);">⏱️ SOC Performance Metrics</h3>
+        <div class="soc-metrics">
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTD</div>
+                <div class="soc-metric-value" id="mttd-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Detect</div>
+            </div>
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTR</div>
+                <div class="soc-metric-value" id="mttr-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Respond</div>
+            </div>
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTA</div>
+                <div class="soc-metric-value" id="mtta-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Acknowledge</div>
             </div>
         </div>
 
@@ -1527,13 +1598,11 @@
             initializeCharts();
             loadData();
             loadSystemMetrics();
-            loadSOCMetrics();
             loadNotifications();
 
             // Auto-refresh intervals
             setInterval(loadData, 15000);           // Dashboard data every 15s
             setInterval(loadSystemMetrics, 5000);   // CPU/Memory every 5s
-            setInterval(loadSOCMetrics, 60000);     // SOC metrics every 60s
             setInterval(loadNotifications, 10000);  // Notifications every 10s
         };
 
@@ -2027,7 +2096,7 @@
             if (tab === 'mitre') loadMITREMatrix();
             if (tab === 'hosts') loadHosts();
             if (tab === 'incidents') loadIncidentsKanban();
-            if (tab === 'compliance') loadCompliance();
+            if (tab === 'compliance') { loadCompliance(); loadSOCMetrics(); }
             if (tab === 'ai') loadAIStats();
         }
 
@@ -2380,6 +2449,15 @@
                         </div>
                     </div>
 
+                    <div class="remediation-section">
+                        <h3 style="color: var(--active-color); margin-bottom: 15px;">🔧 AI Remediation</h3>
+                        <p style="opacity: 0.7; margin-bottom: 15px;">Vraag de AI om remediation stappen te genereren voor dit security event.</p>
+                        <button class="btn btn-remediation" onclick="loadRemediation(${log.TLID})" id="remediation-btn">
+                            🤖 Genereer Remediation Stappen
+                        </button>
+                        <div id="remediation-content" class="remediation-content" style="display: none;"></div>
+                    </div>
+
                     <div style="margin-top: 30px; display: flex; gap: 15px; justify-content: flex-end;">
                         <button class="btn btn-secondary" onclick="createIncident(${log.TLID})">📋 Create Incident</button>
                         <button class="btn" onclick="closeModal()">Close</button>
@@ -2403,6 +2481,67 @@
 
         function closeModal() {
             document.getElementById('logModal').classList.remove('active');
+        }
+
+        // Load AI Remediation Steps
+        async function loadRemediation(logId) {
+            const btn = document.getElementById('remediation-btn');
+            const contentDiv = document.getElementById('remediation-content');
+
+            // Show loading state
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px; display: inline-block; margin-right: 8px;"></div> AI is aan het nadenken...';
+            contentDiv.style.display = 'block';
+            contentDiv.innerHTML = '<div class="loading"><div class="spinner"></div>AI genereert remediation stappen...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/remediation/${logId}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                // Format the remediation content with markdown-like styling
+                let formattedContent = data.remediation_steps
+                    .replace(/## (.*?)(?=\n|$)/g, '<h4 style="color: var(--active-color); margin-top: 20px; margin-bottom: 10px;">$1</h4>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/`(.*?)`/g, '<code style="background: rgba(0,170,85,0.2); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
+                    .replace(/^\d+\.\s+(.*?)$/gm, '<li style="margin-left: 20px; margin-bottom: 8px;">$1</li>')
+                    .replace(/^-\s+(.*?)$/gm, '<li style="margin-left: 20px; margin-bottom: 8px; list-style-type: disc;">$1</li>')
+                    .replace(/\n\n/g, '<br><br>')
+                    .replace(/\n/g, '<br>');
+
+                contentDiv.innerHTML = `
+                    <div style="margin-bottom: 15px;">
+                        <span class="badge badge-${data.severity?.toLowerCase() || 'medium'}">${data.severity || 'Unknown'}</span>
+                        <span style="opacity: 0.7; margin-left: 10px;">Event Type: ${data.event_type || 'Unknown'}</span>
+                    </div>
+                    <div class="remediation-steps">
+                        ${formattedContent}
+                    </div>
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color); opacity: 0.7; font-size: 0.85em;">
+                        ⚠️ Deze remediation stappen zijn AI-gegenereerd. Verifieer altijd voordat je acties uitvoert.
+                    </div>
+                `;
+
+                btn.innerHTML = '✅ Remediation Geladen';
+                btn.style.background = 'var(--secondary-bg)';
+                btn.style.color = 'var(--active-color)';
+
+            } catch (error) {
+                console.error('Error loading remediation:', error);
+                contentDiv.innerHTML = `
+                    <div style="color: #ff4d4d; text-align: center; padding: 20px;">
+                        ❌ Fout bij laden van remediation: ${error.message}
+                        <br><br>
+                        <button class="btn btn-remediation" onclick="loadRemediation(${logId})">🔄 Opnieuw proberen</button>
+                    </div>
+                `;
+                btn.disabled = false;
+                btn.innerHTML = '🔄 Opnieuw proberen';
+            }
         }
 
         // Load Correlated Events
@@ -2844,4 +2983,4 @@
         }
     </script>
 </body>
-</html>
+</html>~

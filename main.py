@@ -1523,6 +1523,80 @@ async def get_alert_enrichment(request: Request, log_id: int):
             "host": row[16]
         }
 
+@app.get("/api/remediation/{log_id}")
+@limiter.limit("20/minute")
+async def get_remediation(request: Request, log_id: int):
+    """Generate AI-powered remediation steps for a security event"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get log details
+        cursor.execute("""
+            SELECT rl.*, ae.mitre_attack_tactic, ae.mitre_attack_technique, ae.threat_score
+            FROM raw_logs rl
+            LEFT JOIN alert_enrichment ae ON rl.id = ae.log_id
+            WHERE rl.id = ?
+        """, (log_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Log not found")
+
+        raw_log = row[2]
+        severity = row[5]
+        event_type = row[6]
+        ai_summary = row[7]
+        mitre_tactic = row[12] if len(row) > 12 else None
+        mitre_technique = row[13] if len(row) > 13 else None
+
+        # Build remediation prompt
+        prompt = f"""You are a SOC analyst assistant. Based on this security event, provide specific remediation steps.
+
+Security Event Details:
+- Severity: {severity}
+- Event Type: {event_type}
+- MITRE Tactic: {mitre_tactic or 'Unknown'}
+- MITRE Technique: {mitre_technique or 'Unknown'}
+- AI Summary: {ai_summary or 'N/A'}
+- Raw Log: {raw_log[:500]}
+
+Provide remediation steps in this format:
+## Immediate Actions
+(List 2-3 immediate steps to contain the threat)
+
+## Investigation Steps
+(List 2-3 steps to investigate the root cause)
+
+## Long-term Remediation
+(List 2-3 steps to prevent recurrence)
+
+## Commands/Tools
+(Provide specific commands or tools that can be used)
+
+Be specific and actionable. Focus on practical steps a SOC analyst can execute immediately."""
+
+        try:
+            ollama_client = Client(host=OLLAMA_URL)
+            response = ollama_client.generate(
+                model=OLLAMA_MODEL,
+                prompt=prompt,
+                options={"temperature": 0.3}
+            )
+
+            remediation_steps = response['response']
+
+            return {
+                "log_id": log_id,
+                "severity": severity,
+                "event_type": event_type,
+                "remediation_steps": remediation_steps
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating remediation: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate remediation: {str(e)}")
+
 @app.get("/api/ai-learning-stats")
 @limiter.limit("60/minute")
 async def get_ai_stats(request: Request):
