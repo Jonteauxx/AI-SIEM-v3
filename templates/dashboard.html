@@ -123,7 +123,7 @@
         .metric-card {
             background-color: var(--secondary-bg);
             border-radius: 8px;
-            padding: 12px 16px;
+            padding: 8px 12px;
             border: 2px solid var(--border-color);
             transition: all 0.2s;
             cursor: pointer;
@@ -828,15 +828,15 @@
         .soc-metrics {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 12px;
         }
 
         .soc-metric-card {
             background: linear-gradient(135deg, var(--secondary-bg) 0%, var(--primary-bg) 100%);
             border: 2px solid var(--border-color);
-            border-radius: 8px;
-            padding: 15px;
+            border-radius: 6px;
+            padding: 8px 10px;
             text-align: center;
         }
 
@@ -845,21 +845,21 @@
         }
 
         .soc-metric-label {
-            font-size: 0.75em;
+            font-size: 0.7em;
             opacity: 0.8;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
 
         .soc-metric-value {
-            font-size: 1.8em;
+            font-size: 1.3em;
             font-weight: bold;
             color: var(--active-color);
-            margin: 5px 0;
+            margin: 2px 0;
         }
 
         .soc-metric-trend {
-            font-size: 0.75em;
+            font-size: 0.65em;
             opacity: 0.7;
         }
 
@@ -1159,6 +1159,7 @@
         <div class="nav-tab active" onclick="switchTab('overview')">📊 Overview</div>
         <div class="nav-tab" onclick="switchTab('threats')">🚨 Threats</div>
         <div class="nav-tab" onclick="switchTab('timeline')">📅 Timeline</div>
+        <div class="nav-tab" onclick="switchTab('mitre')">🎯 MITRE</div>
         <div class="nav-tab" onclick="switchTab('hosts')">🖥️ Hosts</div>
         <div class="nav-tab" onclick="switchTab('incidents')">📋 Incidents</div>
         <div class="nav-tab" onclick="switchTab('compliance')">✅ Compliance</div>
@@ -1239,17 +1240,6 @@
             </div>
         </div>
 
-        <!-- MITRE ATT&CK Matrix -->
-        <div class="data-table" style="margin-bottom: 15px;">
-            <div class="table-header">
-                <div class="table-title">🎯 MITRE ATT&CK Coverage</div>
-                <span id="mitre-coverage" style="color: var(--active-color); font-weight: bold;">0% coverage</span>
-            </div>
-            <div class="mitre-matrix" id="mitre-matrix">
-                <!-- Populated by JavaScript -->
-            </div>
-        </div>
-
         <!-- Recent Logs Table -->
         <div class="data-table">
             <div class="table-header">
@@ -1320,6 +1310,37 @@
         <div class="data-table">
             <div id="timeline-container" class="timeline-container">
                 <div class="loading">Loading timeline...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MITRE ATT&CK Tab -->
+    <div id="mitre-tab" class="tab-content">
+        <h2 style="margin-bottom: 20px; color: var(--active-color);">🎯 MITRE ATT&CK Framework</h2>
+
+        <div class="data-table" style="margin-bottom: 20px;">
+            <div class="table-header">
+                <div class="table-title">Coverage Overview</div>
+                <span id="mitre-coverage" style="color: var(--active-color); font-weight: bold;">0% coverage</span>
+            </div>
+            <div style="padding: 15px;">
+                <p style="opacity: 0.8; margin-bottom: 15px;">
+                    De MITRE ATT&CK matrix toont welke tactieken en technieken zijn gedetecteerd in je omgeving.
+                    Groen = gedetecteerd, Rood = hoge activiteit.
+                </p>
+                <div class="mitre-matrix" id="mitre-matrix">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+
+        <div class="data-table">
+            <div class="table-header">
+                <div class="table-title">Top Gedetecteerde Technieken</div>
+                <button class="btn" onclick="loadMITREMatrix()">🔄 Refresh</button>
+            </div>
+            <div id="mitre-techniques-list" style="padding: 15px;">
+                <div class="loading">Loading techniques...</div>
             </div>
         </div>
     </div>
@@ -1507,7 +1528,6 @@
             loadData();
             loadSystemMetrics();
             loadSOCMetrics();
-            loadMITREMatrix();
             loadNotifications();
 
             // Auto-refresh intervals
@@ -1622,21 +1642,48 @@
                 const container = document.getElementById('mitre-matrix');
                 const coverageEl = document.getElementById('mitre-coverage');
 
-                coverageEl.textContent = `${data.coverage_percent}% coverage (${data.total_tactics_detected}/${data.matrix.length} tactics)`;
+                if (coverageEl) {
+                    coverageEl.textContent = `${data.coverage_percent}% coverage (${data.total_tactics_detected}/${data.matrix.length} tactics)`;
+                }
 
-                let html = '';
-                data.matrix.forEach(item => {
-                    const detectedClass = item.detected ? 'detected' : '';
-                    const highActivity = item.count > 5 ? 'high-activity' : '';
-                    html += `
-                        <div class="mitre-cell ${detectedClass} ${highActivity}" title="${item.tactic}: ${item.count} detections">
-                            <div style="font-size: 0.7em; margin-bottom: 2px;">${item.tactic}</div>
-                            <div class="mitre-cell-count">${item.count || '-'}</div>
-                        </div>
-                    `;
-                });
+                if (container) {
+                    let html = '';
+                    data.matrix.forEach(item => {
+                        const detectedClass = item.detected ? 'detected' : '';
+                        const highActivity = item.count > 5 ? 'high-activity' : '';
+                        html += `
+                            <div class="mitre-cell ${detectedClass} ${highActivity}" title="${item.tactic}: ${item.count} detections">
+                                <div style="font-size: 0.7em; margin-bottom: 2px;">${item.tactic}</div>
+                                <div class="mitre-cell-count">${item.count || '-'}</div>
+                            </div>
+                        `;
+                    });
+                    container.innerHTML = html;
+                }
 
-                container.innerHTML = html;
+                // Populate techniques list if on MITRE tab
+                const techniquesList = document.getElementById('mitre-techniques-list');
+                if (techniquesList && data.techniques && data.techniques.length > 0) {
+                    let techHtml = '<table style="width: 100%; border-collapse: collapse;">';
+                    techHtml += '<thead><tr style="border-bottom: 2px solid var(--border-color);">';
+                    techHtml += '<th style="text-align: left; padding: 8px;">Technique</th>';
+                    techHtml += '<th style="text-align: left; padding: 8px;">Tactic</th>';
+                    techHtml += '<th style="text-align: right; padding: 8px;">Count</th>';
+                    techHtml += '</tr></thead><tbody>';
+
+                    data.techniques.forEach(tech => {
+                        techHtml += `<tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 8px;">${tech.technique || '-'}</td>
+                            <td style="padding: 8px; opacity: 0.7;">${tech.tactic || '-'}</td>
+                            <td style="padding: 8px; text-align: right; color: var(--active-color); font-weight: bold;">${tech.count}</td>
+                        </tr>`;
+                    });
+
+                    techHtml += '</tbody></table>';
+                    techniquesList.innerHTML = techHtml;
+                } else if (techniquesList) {
+                    techniquesList.innerHTML = '<div style="opacity: 0.7; text-align: center;">Geen technieken gedetecteerd</div>';
+                }
             } catch (error) {
                 console.error('Failed to load MITRE matrix:', error);
             }
@@ -1977,6 +2024,7 @@
             // Load tab-specific data
             if (tab === 'threats') loadCorrelatedEvents();
             if (tab === 'timeline') loadTimeline();
+            if (tab === 'mitre') loadMITREMatrix();
             if (tab === 'hosts') loadHosts();
             if (tab === 'incidents') loadIncidentsKanban();
             if (tab === 'compliance') loadCompliance();
