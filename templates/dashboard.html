@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AXS ICT SOC Agent Dashboard v3.0</title>
+    <title>AXS ICT SOC Agent Dashboard v4.0</title>
 
     <!-- Chart.js for Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -19,6 +19,15 @@
             --critical-severity: #cc0000;
             --medium-severity: #ffd700;
             --low-severity: #4CAF50;
+        }
+
+        /* Light Mode Theme */
+        :root.light-mode {
+            --primary-bg: #f0f2f5;
+            --secondary-bg: #ffffff;
+            --active-color: #00aa55;
+            --text-color: #1c2132;
+            --border-color: #d0d4dc;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -631,20 +640,525 @@
         .learn-message.show {
             display: block;
         }
+
+        /* ============================================
+           Dashboard v4.0 - New Feature Styles
+           ============================================ */
+
+        /* Header Controls */
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-btn {
+            background: var(--primary-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-color);
+            font-size: 1.1em;
+        }
+
+        .header-btn:hover {
+            border-color: var(--active-color);
+            transform: scale(1.05);
+        }
+
+        /* CPU Indicator */
+        .cpu-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--primary-bg);
+            padding: 8px 15px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            font-size: 0.85em;
+        }
+
+        .cpu-bar {
+            width: 60px;
+            height: 8px;
+            background: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .cpu-bar-fill {
+            height: 100%;
+            transition: width 0.3s, background-color 0.3s;
+            border-radius: 4px;
+        }
+
+        .cpu-indicator.processing .cpu-icon {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Notification Bell */
+        .notification-bell {
+            position: relative;
+        }
+
+        .notification-count {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: var(--critical-severity);
+            color: white;
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .notification-count.hidden {
+            display: none;
+        }
+
+        /* Notification Dropdown */
+        .notification-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            width: 350px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: var(--secondary-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            z-index: 1001;
+            display: none;
+        }
+
+        .notification-dropdown.active {
+            display: block;
+        }
+
+        .notification-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .notification-item:hover {
+            background: rgba(0, 255, 115, 0.1);
+        }
+
+        .notification-item.critical {
+            border-left: 3px solid var(--critical-severity);
+        }
+
+        .notification-item.high {
+            border-left: 3px solid var(--high-severity);
+        }
+
+        .notification-title {
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 4px;
+        }
+
+        .notification-message {
+            font-size: 0.8em;
+            opacity: 0.8;
+        }
+
+        .notification-time {
+            font-size: 0.7em;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            animation: slideInRight 0.3s ease-out;
+            max-width: 350px;
+        }
+
+        .toast.critical {
+            background: var(--critical-severity);
+            color: white;
+        }
+
+        .toast.high {
+            background: var(--high-severity);
+            color: white;
+        }
+
+        .toast.success {
+            background: var(--low-severity);
+            color: white;
+        }
+
+        .toast.info {
+            background: var(--active-color);
+            color: var(--primary-bg);
+        }
+
+        @keyframes slideInRight {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes slideOutRight {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+
+        /* SOC Metrics Cards */
+        .soc-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .soc-metric-card {
+            background: linear-gradient(135deg, var(--secondary-bg) 0%, var(--primary-bg) 100%);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .soc-metric-card:hover {
+            border-color: var(--active-color);
+        }
+
+        .soc-metric-label {
+            font-size: 0.75em;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .soc-metric-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: var(--active-color);
+            margin: 5px 0;
+        }
+
+        .soc-metric-trend {
+            font-size: 0.75em;
+            opacity: 0.7;
+        }
+
+        /* MITRE ATT&CK Matrix */
+        .mitre-matrix {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            margin: 15px 0;
+        }
+
+        .mitre-cell {
+            background: var(--secondary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px 4px;
+            text-align: center;
+            font-size: 0.65em;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-height: 50px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .mitre-cell:hover {
+            transform: scale(1.05);
+            z-index: 10;
+        }
+
+        .mitre-cell.detected {
+            background: rgba(0, 255, 115, 0.2);
+            border-color: var(--active-color);
+        }
+
+        .mitre-cell.high-activity {
+            background: rgba(255, 77, 77, 0.3);
+            border-color: var(--high-severity);
+        }
+
+        .mitre-cell-count {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: var(--active-color);
+        }
+
+        /* Timeline Styles */
+        .timeline-container {
+            padding: 20px;
+        }
+
+        .timeline-filters {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .timeline-filters select,
+        .timeline-filters input {
+            padding: 8px 12px;
+            background: var(--secondary-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-color);
+        }
+
+        .timeline-filters select:focus,
+        .timeline-filters input:focus {
+            outline: none;
+            border-color: var(--active-color);
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--active-color);
+        }
+
+        .timeline-event {
+            position: relative;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: var(--secondary-bg);
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .timeline-event:hover {
+            border-color: var(--active-color);
+            transform: translateX(5px);
+        }
+
+        .timeline-event::before {
+            content: '';
+            position: absolute;
+            left: -24px;
+            top: 20px;
+            width: 12px;
+            height: 12px;
+            background: var(--active-color);
+            border-radius: 50%;
+            border: 3px solid var(--primary-bg);
+        }
+
+        .timeline-event.critical::before {
+            background: var(--critical-severity);
+        }
+
+        .timeline-event.high::before {
+            background: var(--high-severity);
+        }
+
+        .timeline-event-time {
+            font-size: 0.8em;
+            color: var(--active-color);
+            margin-bottom: 5px;
+        }
+
+        .timeline-event-summary {
+            font-size: 0.9em;
+            margin-top: 8px;
+            opacity: 0.8;
+        }
+
+        /* Kanban Board */
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            padding: 10px 0;
+            min-height: 500px;
+        }
+
+        .kanban-column {
+            background: var(--primary-bg);
+            border-radius: 8px;
+            padding: 10px;
+            min-height: 400px;
+        }
+
+        .kanban-column-header {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .kanban-column-header.open {
+            background: var(--high-severity);
+            color: white;
+        }
+
+        .kanban-column-header.in-progress {
+            background: var(--medium-severity);
+            color: var(--primary-bg);
+        }
+
+        .kanban-column-header.resolved {
+            background: var(--active-color);
+            color: var(--primary-bg);
+        }
+
+        .kanban-column-header.closed {
+            background: var(--border-color);
+            color: var(--text-color);
+        }
+
+        .kanban-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 300px;
+        }
+
+        .kanban-card {
+            background: var(--secondary-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            cursor: grab;
+            transition: all 0.2s;
+        }
+
+        .kanban-card:hover {
+            border-color: var(--active-color);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .kanban-card.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+
+        .kanban-card-title {
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .kanban-card-meta {
+            font-size: 0.75em;
+            opacity: 0.7;
+        }
+
+        /* Briefing Modal */
+        .briefing-content {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            font-size: 0.95em;
+        }
+
+        .briefing-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .briefing-stat {
+            background: var(--primary-bg);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        /* Sparklines */
+        .sparkline-container {
+            height: 30px;
+            margin-top: 5px;
+        }
+
+        .sparkline-container canvas {
+            max-height: 30px !important;
+        }
     </style>
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <!-- Header -->
     <div class="header">
         <div class="logo">🛡️ AXS ICT SOC Agent</div>
         <div class="title">AI-Powered Security Operations Center</div>
-        <div class="version">v3.0.0</div>
+        <div class="header-controls">
+            <!-- CPU Indicator -->
+            <div class="cpu-indicator" id="cpu-indicator" title="System Load">
+                <span class="cpu-icon">💻</span>
+                <div class="cpu-bar">
+                    <div class="cpu-bar-fill" id="cpu-bar-fill" style="width: 0%; background: var(--low-severity);"></div>
+                </div>
+                <span id="cpu-percent">0%</span>
+            </div>
+            <!-- Notification Bell -->
+            <div class="notification-bell" id="notification-bell">
+                <button class="header-btn" onclick="toggleNotifications()">
+                    🔔
+                    <span class="notification-count hidden" id="notification-count">0</span>
+                </button>
+                <div class="notification-dropdown" id="notification-dropdown">
+                    <div id="notification-list">
+                        <div class="notification-item" style="text-align: center; opacity: 0.7;">
+                            No new notifications
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Theme Toggle -->
+            <button class="header-btn" onclick="toggleTheme()" title="Toggle Theme">
+                <span id="theme-icon">🌙</span>
+            </button>
+            <!-- Briefing Button -->
+            <button class="header-btn" onclick="showBriefing()" title="Threat Briefing">
+                📋
+            </button>
+            <div class="version">v4.0.0</div>
+        </div>
     </div>
 
     <!-- Navigation Tabs -->
     <div class="nav-tabs">
         <div class="nav-tab active" onclick="switchTab('overview')">📊 Overview</div>
         <div class="nav-tab" onclick="switchTab('threats')">🚨 Threats</div>
+        <div class="nav-tab" onclick="switchTab('timeline')">📅 Timeline</div>
         <div class="nav-tab" onclick="switchTab('hosts')">🖥️ Hosts</div>
         <div class="nav-tab" onclick="switchTab('incidents')">📋 Incidents</div>
         <div class="nav-tab" onclick="switchTab('compliance')">✅ Compliance</div>
@@ -686,6 +1200,25 @@
             </div>
         </div>
 
+        <!-- SOC Performance Metrics -->
+        <div class="soc-metrics">
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTD</div>
+                <div class="soc-metric-value" id="mttd-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Detect</div>
+            </div>
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTR</div>
+                <div class="soc-metric-value" id="mttr-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Respond</div>
+            </div>
+            <div class="soc-metric-card">
+                <div class="soc-metric-label">MTTA</div>
+                <div class="soc-metric-value" id="mtta-value">-</div>
+                <div class="soc-metric-trend">Mean Time to Acknowledge</div>
+            </div>
+        </div>
+
         <!-- Charts -->
         <div class="charts-grid">
             <div class="chart-container">
@@ -703,6 +1236,17 @@
             <div class="chart-container">
                 <div class="chart-title">Most Targeted Hosts</div>
                 <canvas id="hostsChart"></canvas>
+            </div>
+        </div>
+
+        <!-- MITRE ATT&CK Matrix -->
+        <div class="data-table" style="margin-bottom: 15px;">
+            <div class="table-header">
+                <div class="table-title">🎯 MITRE ATT&CK Coverage</div>
+                <span id="mitre-coverage" style="color: var(--active-color); font-weight: bold;">0% coverage</span>
+            </div>
+            <div class="mitre-matrix" id="mitre-matrix">
+                <!-- Populated by JavaScript -->
             </div>
         </div>
 
@@ -748,6 +1292,38 @@
         </div>
     </div>
 
+    <!-- Timeline Tab -->
+    <div id="timeline-tab" class="tab-content">
+        <h2 style="margin-bottom: 20px; color: var(--active-color);">📅 Security Event Timeline</h2>
+
+        <div class="timeline-filters">
+            <select id="timeline-hours" onchange="loadTimeline()">
+                <option value="6">Last 6 Hours</option>
+                <option value="12">Last 12 Hours</option>
+                <option value="24" selected>Last 24 Hours</option>
+                <option value="48">Last 48 Hours</option>
+                <option value="168">Last 7 Days</option>
+            </select>
+            <select id="timeline-severity" onchange="loadTimeline()">
+                <option value="">All Severities</option>
+                <option value="Critical">Critical</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+            </select>
+            <select id="timeline-host" onchange="loadTimeline()">
+                <option value="">All Hosts</option>
+            </select>
+            <button class="btn" onclick="loadTimeline()">🔄 Refresh</button>
+        </div>
+
+        <div class="data-table">
+            <div id="timeline-container" class="timeline-container">
+                <div class="loading">Loading timeline...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Hosts Tab -->
     <div id="hosts-tab" class="tab-content">
         <h2 style="margin-bottom: 20px; color: var(--active-color);">🖥️ Asset Management & Risk Assessment</h2>
@@ -765,16 +1341,34 @@
 
     <!-- Incidents Tab -->
     <div id="incidents-tab" class="tab-content">
-        <h2 style="margin-bottom: 20px; color: var(--active-color);">📋 Incident Management</h2>
+        <h2 style="margin-bottom: 20px; color: var(--active-color);">📋 Incident Management - Kanban Board</h2>
 
-        <div class="data-table">
-            <div class="table-header">
-                <div class="table-title">Active Incidents</div>
-                <button class="btn" onclick="loadIncidents()">🔄 Refresh</button>
+        <div class="kanban-board" id="kanban-board">
+            <div class="kanban-column" data-status="Open">
+                <div class="kanban-column-header open">🔴 Open</div>
+                <div class="kanban-cards" id="kanban-open">
+                    <div class="loading" style="font-size: 0.8em;">Loading...</div>
+                </div>
             </div>
-            <div id="incidents-container">
-                <div class="loading">Loading incidents...</div>
+            <div class="kanban-column" data-status="In Progress">
+                <div class="kanban-column-header in-progress">🟡 In Progress</div>
+                <div class="kanban-cards" id="kanban-in-progress">
+                </div>
             </div>
+            <div class="kanban-column" data-status="Resolved">
+                <div class="kanban-column-header resolved">🟢 Resolved</div>
+                <div class="kanban-cards" id="kanban-resolved">
+                </div>
+            </div>
+            <div class="kanban-column" data-status="Closed">
+                <div class="kanban-column-header closed">⚫ Closed</div>
+                <div class="kanban-cards" id="kanban-closed">
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button class="btn" onclick="loadIncidents()">🔄 Refresh Board</button>
         </div>
     </div>
 
@@ -855,6 +1449,19 @@
         </div>
     </div>
 
+    <!-- Briefing Modal -->
+    <div id="briefingModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <div class="modal-title">📋 AI Threat Briefing</div>
+                <div class="close-btn" onclick="closeBriefingModal()">&times;</div>
+            </div>
+            <div id="briefingBody">
+                <div class="loading">Generating threat briefing...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Floating Chatbot -->
     <button class="chatbot-toggle" onclick="toggleChatbot()" title="AI SOC Assistant">
         🤖
@@ -885,13 +1492,479 @@
         const API_BASE = '/api';
         let charts = {};
         let currentLogs = [];
+        let lastNotificationCheck = null;
 
         // Initialize Dashboard
         window.onload = () => {
+            // Restore theme from localStorage
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'light') {
+                document.documentElement.classList.add('light-mode');
+                document.getElementById('theme-icon').textContent = '☀️';
+            }
+
             initializeCharts();
             loadData();
-            setInterval(loadData, 15000); // Refresh every 15 seconds
+            loadSystemMetrics();
+            loadSOCMetrics();
+            loadMITREMatrix();
+            loadNotifications();
+
+            // Auto-refresh intervals
+            setInterval(loadData, 15000);           // Dashboard data every 15s
+            setInterval(loadSystemMetrics, 5000);   // CPU/Memory every 5s
+            setInterval(loadSOCMetrics, 60000);     // SOC metrics every 60s
+            setInterval(loadNotifications, 10000);  // Notifications every 10s
         };
+
+        // ============================================
+        // Dashboard v4.0 - New Feature Functions
+        // ============================================
+
+        // Theme Toggle
+        function toggleTheme() {
+            const root = document.documentElement;
+            const icon = document.getElementById('theme-icon');
+
+            if (root.classList.contains('light-mode')) {
+                root.classList.remove('light-mode');
+                icon.textContent = '🌙';
+                localStorage.setItem('theme', 'dark');
+            } else {
+                root.classList.add('light-mode');
+                icon.textContent = '☀️';
+                localStorage.setItem('theme', 'light');
+            }
+
+            // Update charts for new theme
+            updateChartsTheme();
+        }
+
+        function updateChartsTheme() {
+            const isLight = document.documentElement.classList.contains('light-mode');
+            const textColor = isLight ? '#1c2132' : '#e0e0e0';
+            const gridColor = isLight ? '#d0d4dc' : '#3b4257';
+
+            Object.values(charts).forEach(chart => {
+                if (chart.options.scales) {
+                    if (chart.options.scales.x) {
+                        chart.options.scales.x.ticks.color = textColor;
+                        chart.options.scales.x.grid.color = gridColor;
+                    }
+                    if (chart.options.scales.y) {
+                        chart.options.scales.y.ticks.color = textColor;
+                        chart.options.scales.y.grid.color = gridColor;
+                    }
+                }
+                if (chart.options.plugins?.legend?.labels) {
+                    chart.options.plugins.legend.labels.color = textColor;
+                }
+                chart.update();
+            });
+        }
+
+        // System Metrics (CPU/Memory)
+        async function loadSystemMetrics() {
+            try {
+                const response = await fetch(`${API_BASE}/system-metrics`);
+                const data = await response.json();
+
+                const cpuPercent = Math.round(data.cpu_percent);
+                const cpuBar = document.getElementById('cpu-bar-fill');
+                const cpuText = document.getElementById('cpu-percent');
+                const cpuIndicator = document.getElementById('cpu-indicator');
+
+                cpuText.textContent = `${cpuPercent}%`;
+                cpuBar.style.width = `${cpuPercent}%`;
+
+                // Color based on load
+                if (cpuPercent > 80) {
+                    cpuBar.style.background = 'var(--high-severity)';
+                } else if (cpuPercent > 50) {
+                    cpuBar.style.background = 'var(--medium-severity)';
+                } else {
+                    cpuBar.style.background = 'var(--low-severity)';
+                }
+
+                // Processing animation
+                if (data.processor_active) {
+                    cpuIndicator.classList.add('processing');
+                    cpuIndicator.title = `CPU: ${cpuPercent}% | AI Processing Active`;
+                } else {
+                    cpuIndicator.classList.remove('processing');
+                    cpuIndicator.title = `CPU: ${cpuPercent}% | Memory: ${Math.round(data.memory_percent)}%`;
+                }
+            } catch (error) {
+                console.error('Failed to load system metrics:', error);
+            }
+        }
+
+        // SOC Metrics (MTTD/MTTR/MTTA)
+        async function loadSOCMetrics() {
+            try {
+                const response = await fetch(`${API_BASE}/soc-metrics`);
+                const data = await response.json();
+
+                document.getElementById('mttd-value').textContent = data.mttd_formatted || '-';
+                document.getElementById('mttr-value').textContent = data.mttr_formatted || '-';
+                document.getElementById('mtta-value').textContent = data.mtta_formatted || '-';
+            } catch (error) {
+                console.error('Failed to load SOC metrics:', error);
+            }
+        }
+
+        // MITRE ATT&CK Matrix
+        async function loadMITREMatrix() {
+            try {
+                const response = await fetch(`${API_BASE}/mitre-matrix`);
+                const data = await response.json();
+
+                const container = document.getElementById('mitre-matrix');
+                const coverageEl = document.getElementById('mitre-coverage');
+
+                coverageEl.textContent = `${data.coverage_percent}% coverage (${data.total_tactics_detected}/${data.matrix.length} tactics)`;
+
+                let html = '';
+                data.matrix.forEach(item => {
+                    const detectedClass = item.detected ? 'detected' : '';
+                    const highActivity = item.count > 5 ? 'high-activity' : '';
+                    html += `
+                        <div class="mitre-cell ${detectedClass} ${highActivity}" title="${item.tactic}: ${item.count} detections">
+                            <div style="font-size: 0.7em; margin-bottom: 2px;">${item.tactic}</div>
+                            <div class="mitre-cell-count">${item.count || '-'}</div>
+                        </div>
+                    `;
+                });
+
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Failed to load MITRE matrix:', error);
+            }
+        }
+
+        // Notifications
+        function toggleNotifications() {
+            const dropdown = document.getElementById('notification-dropdown');
+            dropdown.classList.toggle('active');
+        }
+
+        async function loadNotifications() {
+            try {
+                const response = await fetch(`${API_BASE}/notifications`);
+                const data = await response.json();
+
+                const countEl = document.getElementById('notification-count');
+                const listEl = document.getElementById('notification-list');
+
+                if (data.total_unread > 0) {
+                    countEl.textContent = data.total_unread;
+                    countEl.classList.remove('hidden');
+                } else {
+                    countEl.classList.add('hidden');
+                }
+
+                if (data.notifications.length === 0) {
+                    listEl.innerHTML = '<div class="notification-item" style="text-align: center; opacity: 0.7;">No new notifications</div>';
+                    return;
+                }
+
+                let html = '';
+                data.notifications.forEach(notif => {
+                    const severityClass = notif.severity?.toLowerCase() || '';
+                    const timeAgo = formatTimeAgo(notif.timestamp);
+                    html += `
+                        <div class="notification-item ${severityClass}" onclick="handleNotificationClick(${notif.id})">
+                            <div class="notification-title">${notif.title}</div>
+                            <div class="notification-message">${notif.message}</div>
+                            <div class="notification-time">${timeAgo}</div>
+                        </div>
+                    `;
+                });
+
+                listEl.innerHTML = html;
+
+                // Show toast for critical notifications
+                if (data.has_critical && lastNotificationCheck) {
+                    const newCritical = data.notifications.find(n =>
+                        n.severity === 'Critical' &&
+                        new Date(n.timestamp) > lastNotificationCheck
+                    );
+                    if (newCritical) {
+                        showToast(newCritical.title, 'critical');
+                    }
+                }
+                lastNotificationCheck = new Date();
+
+            } catch (error) {
+                console.error('Failed to load notifications:', error);
+            }
+        }
+
+        function handleNotificationClick(notifId) {
+            toggleNotifications();
+            // Could navigate to specific log or incident
+        }
+
+        // Toast Notifications
+        function showToast(message, type = 'info', duration = 5000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideOutRight 0.3s ease-out';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // Timeline
+        async function loadTimeline() {
+            const hours = document.getElementById('timeline-hours').value;
+            const severity = document.getElementById('timeline-severity').value;
+            const host = document.getElementById('timeline-host').value;
+
+            try {
+                let url = `${API_BASE}/timeline?hours=${hours}`;
+                if (severity) url += `&severity=${severity}`;
+                if (host) url += `&host=${encodeURIComponent(host)}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Populate host filter
+                const hostSelect = document.getElementById('timeline-host');
+                if (data.available_hosts && hostSelect.options.length <= 1) {
+                    data.available_hosts.forEach(h => {
+                        if (h) {
+                            const opt = document.createElement('option');
+                            opt.value = h;
+                            opt.textContent = h;
+                            hostSelect.appendChild(opt);
+                        }
+                    });
+                }
+
+                const container = document.getElementById('timeline-container');
+
+                if (data.events.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; padding: 40px; opacity: 0.7;">No events found for selected filters</div>';
+                    return;
+                }
+
+                let html = '<div class="timeline">';
+                data.events.forEach(event => {
+                    const severityClass = event.severity?.toLowerCase() || '';
+                    const time = new Date(event.timestamp).toLocaleString();
+                    html += `
+                        <div class="timeline-event ${severityClass}" onclick="showLogDetail(${event.id})">
+                            <div class="timeline-event-time">${time}</div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span><strong>${event.event_type || 'Unknown'}</strong></span>
+                                <span class="badge badge-${severityClass}">${event.severity || 'Unknown'}</span>
+                            </div>
+                            <div class="timeline-event-summary">${event.summary || event.raw_log}</div>
+                            ${event.host ? `<div style="font-size: 0.75em; opacity: 0.7; margin-top: 5px;">Host: ${event.host}</div>` : ''}
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                container.innerHTML = html;
+
+            } catch (error) {
+                console.error('Failed to load timeline:', error);
+                document.getElementById('timeline-container').innerHTML =
+                    '<div style="color: var(--high-severity);">Error loading timeline</div>';
+            }
+        }
+
+        // Threat Briefing
+        function showBriefing() {
+            const modal = document.getElementById('briefingModal');
+            const body = document.getElementById('briefingBody');
+
+            body.innerHTML = '<div class="loading">Generating AI threat briefing... This may take a moment.</div>';
+            modal.classList.add('active');
+
+            loadBriefing();
+        }
+
+        function closeBriefingModal() {
+            document.getElementById('briefingModal').classList.remove('active');
+        }
+
+        async function loadBriefing() {
+            try {
+                const response = await fetch(`${API_BASE}/threat-briefing`);
+                const data = await response.json();
+
+                const stats = data.statistics;
+                const severityDist = stats.severity_distribution || {};
+
+                let html = `
+                    <div style="margin-bottom: 20px; opacity: 0.7; font-size: 0.9em;">
+                        Generated: ${new Date(data.generated_at).toLocaleString()} | Period: ${data.period}
+                    </div>
+
+                    <div class="briefing-stats">
+                        <div class="briefing-stat">
+                            <div style="font-size: 2em; color: var(--critical-severity);">${severityDist.Critical || 0}</div>
+                            <div>Critical</div>
+                        </div>
+                        <div class="briefing-stat">
+                            <div style="font-size: 2em; color: var(--high-severity);">${severityDist.High || 0}</div>
+                            <div>High</div>
+                        </div>
+                        <div class="briefing-stat">
+                            <div style="font-size: 2em; color: var(--medium-severity);">${severityDist.Medium || 0}</div>
+                            <div>Medium</div>
+                        </div>
+                        <div class="briefing-stat">
+                            <div style="font-size: 2em; color: var(--low-severity);">${severityDist.Low || 0}</div>
+                            <div>Low</div>
+                        </div>
+                        <div class="briefing-stat">
+                            <div style="font-size: 2em; color: var(--active-color);">${stats.open_incidents || 0}</div>
+                            <div>Open Incidents</div>
+                        </div>
+                    </div>
+
+                    <h3 style="margin: 20px 0 10px; color: var(--active-color);">🤖 AI Summary</h3>
+                    <div class="briefing-content" style="background: var(--primary-bg); padding: 20px; border-radius: 8px;">
+                        ${data.ai_summary.replace(/\n/g, '<br>')}
+                    </div>
+                `;
+
+                document.getElementById('briefingBody').innerHTML = html;
+
+            } catch (error) {
+                console.error('Failed to load briefing:', error);
+                document.getElementById('briefingBody').innerHTML =
+                    '<div style="color: var(--high-severity);">Error generating briefing. Please try again.</div>';
+            }
+        }
+
+        // Kanban Board for Incidents
+        async function loadIncidentsKanban() {
+            try {
+                const response = await fetch(`${API_BASE}/incidents`);
+                const incidents = await response.json();
+
+                // Clear all columns
+                document.getElementById('kanban-open').innerHTML = '';
+                document.getElementById('kanban-in-progress').innerHTML = '';
+                document.getElementById('kanban-resolved').innerHTML = '';
+                document.getElementById('kanban-closed').innerHTML = '';
+
+                incidents.forEach(incident => {
+                    const card = createKanbanCard(incident);
+                    const status = incident.status.toLowerCase().replace(' ', '-');
+                    const column = document.getElementById(`kanban-${status}`);
+                    if (column) {
+                        column.appendChild(card);
+                    }
+                });
+
+                // Setup drag and drop
+                setupKanbanDragDrop();
+
+            } catch (error) {
+                console.error('Failed to load incidents for kanban:', error);
+            }
+        }
+
+        function createKanbanCard(incident) {
+            const card = document.createElement('div');
+            card.className = 'kanban-card';
+            card.draggable = true;
+            card.dataset.incidentId = incident.id;
+            card.dataset.status = incident.status;
+
+            const severityClass = incident.severity?.toLowerCase() || 'medium';
+            const createdAt = new Date(incident.created_at).toLocaleDateString();
+
+            card.innerHTML = `
+                <div class="kanban-card-title">
+                    <span class="badge badge-${severityClass}" style="margin-right: 8px;">${incident.severity || 'Medium'}</span>
+                    #${incident.id}
+                </div>
+                <div style="margin-bottom: 8px;">${incident.title || 'Untitled Incident'}</div>
+                <div class="kanban-card-meta">
+                    Created: ${createdAt}<br>
+                    ${incident.assigned_to ? `Assigned: ${incident.assigned_to}` : 'Unassigned'}
+                </div>
+            `;
+
+            return card;
+        }
+
+        function setupKanbanDragDrop() {
+            const cards = document.querySelectorAll('.kanban-card');
+            const columns = document.querySelectorAll('.kanban-cards');
+
+            cards.forEach(card => {
+                card.addEventListener('dragstart', (e) => {
+                    card.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', card.dataset.incidentId);
+                });
+
+                card.addEventListener('dragend', () => {
+                    card.classList.remove('dragging');
+                });
+            });
+
+            columns.forEach(column => {
+                column.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    column.style.background = 'rgba(0, 255, 115, 0.1)';
+                });
+
+                column.addEventListener('dragleave', () => {
+                    column.style.background = '';
+                });
+
+                column.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    column.style.background = '';
+
+                    const incidentId = e.dataTransfer.getData('text/plain');
+                    const newStatus = column.parentElement.dataset.status;
+
+                    try {
+                        await fetch(`${API_BASE}/incidents/${incidentId}/update-status?status=${encodeURIComponent(newStatus)}`, {
+                            method: 'POST'
+                        });
+                        showToast(`Incident #${incidentId} moved to ${newStatus}`, 'success');
+                        loadIncidentsKanban();
+                    } catch (error) {
+                        showToast('Failed to update incident status', 'high');
+                    }
+                });
+            });
+        }
+
+        // Helper function
+        function formatTimeAgo(timestamp) {
+            const now = new Date();
+            const time = new Date(timestamp);
+            const diff = Math.floor((now - time) / 1000);
+
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return `${Math.floor(diff / 86400)}d ago`;
+        }
+
+        // Close dropdowns on outside click
+        document.addEventListener('click', (e) => {
+            const bellContainer = document.getElementById('notification-bell');
+            if (!bellContainer.contains(e.target)) {
+                document.getElementById('notification-dropdown').classList.remove('active');
+            }
+        });
 
         // Tab Switching
         function switchTab(tab) {
@@ -903,10 +1976,16 @@
 
             // Load tab-specific data
             if (tab === 'threats') loadCorrelatedEvents();
+            if (tab === 'timeline') loadTimeline();
             if (tab === 'hosts') loadHosts();
-            if (tab === 'incidents') loadIncidents();
+            if (tab === 'incidents') loadIncidentsKanban();
             if (tab === 'compliance') loadCompliance();
             if (tab === 'ai') loadAIStats();
+        }
+
+        // Override loadIncidents to use Kanban
+        function loadIncidents() {
+            loadIncidentsKanban();
         }
 
         // Initialize Charts

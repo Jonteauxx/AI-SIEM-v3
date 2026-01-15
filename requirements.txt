@@ -27,6 +27,9 @@ python-dotenv==1.0.0
 # Data Serialization
 msgpack==1.0.7
 
+# System Monitoring
+psutil==5.9.8
+
 # Optional: For production deployments
 # gunicorn==21.2.0  # Production WSGI server
 # psycopg2-binary==2.9.9  # PostgreSQL adapter (if migrating from SQLite)

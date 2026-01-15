@@ -13,6 +13,7 @@ import time
 import signal
 import sys
 import logging
+import psutil
 from contextlib import contextmanager
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
@@ -60,7 +61,13 @@ INGESTOR_RUNNING.set()
 TOTAL_LOGS_COUNT = 0
 PENDING_LOGS_COUNT = 0
 PROCESSED_LOGS_COUNT = 0
+PROCESSOR_ACTIVE = False
 metrics_lock = threading.Lock()
+
+def set_processor_active(active):
+    """Helper function to set PROCESSOR_ACTIVE global variable"""
+    global PROCESSOR_ACTIVE
+    PROCESSOR_ACTIVE = active
 
 # ==============================================================================
 # 3. FastAPI App Configuration
@@ -885,9 +892,11 @@ def processor_loop():
                 rows = cursor.fetchall()
 
             if not rows:
+                set_processor_active(False)
                 time.sleep(SLEEP_WHEN_EMPTY)
                 continue
 
+            set_processor_active(True)
             logger.info(f"📦 Processing {len(rows)} pending logs...")
 
             # Process each log
@@ -1891,6 +1900,410 @@ async def get_playbooks(request: Request):
     ]
 
     return playbooks
+
+# ==============================================================================
+# 12b. Dashboard v4.0 - New Feature Endpoints
+# ==============================================================================
+
+@app.get("/api/system-metrics")
+@limiter.limit("120/minute")
+async def get_system_metrics(request: Request):
+    """Get system CPU, memory, and processor status"""
+    global PROCESSOR_ACTIVE
+
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+
+    return {
+        "cpu_percent": cpu_percent,
+        "memory_percent": memory.percent,
+        "memory_used_gb": round(memory.used / (1024**3), 2),
+        "memory_total_gb": round(memory.total / (1024**3), 2),
+        "disk_percent": disk.percent,
+        "processor_active": PROCESSOR_ACTIVE,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+@app.get("/api/soc-metrics")
+@limiter.limit("60/minute")
+async def get_soc_metrics(request: Request):
+    """Get SOC performance metrics: MTTD, MTTR, MTTA"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # MTTD: Mean Time to Detect (time between log timestamp and processed_at)
+        cursor.execute("""
+            SELECT AVG(
+                CAST((julianday(processed_at) - julianday(timestamp)) * 86400 AS INTEGER)
+            ) as avg_mttd
+            FROM raw_logs
+            WHERE status = 'PROCESSED'
+            AND processed_at IS NOT NULL
+            AND timestamp IS NOT NULL
+            AND datetime(timestamp) > datetime('now', '-7 days')
+        """)
+        mttd_result = cursor.fetchone()
+        mttd_seconds = int(mttd_result[0]) if mttd_result and mttd_result[0] else 0
+
+        # MTTR: Mean Time to Respond (incident created to resolved)
+        cursor.execute("""
+            SELECT AVG(
+                CAST((julianday(resolved_at) - julianday(created_at)) * 86400 AS INTEGER)
+            ) as avg_mttr
+            FROM incidents
+            WHERE resolved_at IS NOT NULL
+            AND datetime(created_at) > datetime('now', '-30 days')
+        """)
+        mttr_result = cursor.fetchone()
+        mttr_seconds = int(mttr_result[0]) if mttr_result and mttr_result[0] else 0
+
+        # MTTA: Mean Time to Acknowledge (created to status change)
+        cursor.execute("""
+            SELECT AVG(
+                CAST((julianday(updated_at) - julianday(created_at)) * 86400 AS INTEGER)
+            ) as avg_mtta
+            FROM incidents
+            WHERE status != 'Open'
+            AND datetime(created_at) > datetime('now', '-30 days')
+        """)
+        mtta_result = cursor.fetchone()
+        mtta_seconds = int(mtta_result[0]) if mtta_result and mtta_result[0] else 0
+
+        # Get counts for context
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status = 'PROCESSED' AND datetime(timestamp) > datetime('now', '-24 hours')")
+        logs_24h = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM incidents WHERE datetime(created_at) > datetime('now', '-7 days')")
+        incidents_7d = cursor.fetchone()[0]
+
+    return {
+        "mttd_seconds": mttd_seconds,
+        "mttd_formatted": format_duration(mttd_seconds),
+        "mttr_seconds": mttr_seconds,
+        "mttr_formatted": format_duration(mttr_seconds),
+        "mtta_seconds": mtta_seconds,
+        "mtta_formatted": format_duration(mtta_seconds),
+        "logs_analyzed_24h": logs_24h,
+        "incidents_7d": incidents_7d
+    }
+
+def format_duration(seconds):
+    """Format seconds into human-readable duration"""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60}s"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h {minutes}m"
+    else:
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        return f"{days}d {hours}h"
+
+@app.get("/api/mitre-matrix")
+@limiter.limit("60/minute")
+async def get_mitre_matrix(request: Request):
+    """Get MITRE ATT&CK matrix data from alert enrichment"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get tactic counts
+        cursor.execute("""
+            SELECT mitre_attack_tactic, COUNT(*) as count
+            FROM alert_enrichment
+            WHERE mitre_attack_tactic IS NOT NULL AND mitre_attack_tactic != ''
+            GROUP BY mitre_attack_tactic
+            ORDER BY count DESC
+        """)
+        tactics = [{"tactic": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+        # Get technique counts
+        cursor.execute("""
+            SELECT mitre_attack_technique, mitre_attack_tactic, COUNT(*) as count
+            FROM alert_enrichment
+            WHERE mitre_attack_technique IS NOT NULL AND mitre_attack_technique != ''
+            GROUP BY mitre_attack_technique, mitre_attack_tactic
+            ORDER BY count DESC
+            LIMIT 20
+        """)
+        techniques = [{"technique": row[0], "tactic": row[1], "count": row[2]} for row in cursor.fetchall()]
+
+        # Get total coverage
+        cursor.execute("SELECT COUNT(DISTINCT mitre_attack_tactic) FROM alert_enrichment WHERE mitre_attack_tactic IS NOT NULL")
+        total_tactics = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(DISTINCT mitre_attack_technique) FROM alert_enrichment WHERE mitre_attack_technique IS NOT NULL")
+        total_techniques = cursor.fetchone()[0]
+
+    # MITRE ATT&CK Framework Tactics (for matrix display)
+    mitre_tactics = [
+        "Reconnaissance", "Resource Development", "Initial Access", "Execution",
+        "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access",
+        "Discovery", "Lateral Movement", "Collection", "Command and Control",
+        "Exfiltration", "Impact"
+    ]
+
+    # Build matrix data
+    matrix = []
+    for tactic in mitre_tactics:
+        tactic_data = next((t for t in tactics if t["tactic"] == tactic), None)
+        matrix.append({
+            "tactic": tactic,
+            "count": tactic_data["count"] if tactic_data else 0,
+            "detected": tactic_data is not None
+        })
+
+    return {
+        "matrix": matrix,
+        "tactics": tactics,
+        "techniques": techniques,
+        "total_tactics_detected": total_tactics,
+        "total_techniques_detected": total_techniques,
+        "coverage_percent": round((total_tactics / len(mitre_tactics)) * 100, 1) if total_tactics else 0
+    }
+
+@app.get("/api/timeline")
+@limiter.limit("60/minute")
+async def get_timeline(request: Request, hours: int = 24, host: str = None, severity: str = None):
+    """Get chronological timeline of security events"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT id, timestamp, raw_log, severity, event_type, ai_summary, host, processed_at
+            FROM raw_logs
+            WHERE status = 'PROCESSED'
+            AND datetime(timestamp) > datetime('now', ? || ' hours')
+        """
+        params = [f"-{hours}"]
+
+        if host:
+            query += " AND host = ?"
+            params.append(host)
+
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+
+        query += " ORDER BY timestamp DESC LIMIT 100"
+
+        cursor.execute(query, params)
+        events = []
+        for row in cursor.fetchall():
+            events.append({
+                "id": row[0],
+                "timestamp": row[1],
+                "raw_log": row[2][:200] if row[2] else "",
+                "severity": row[3],
+                "event_type": row[4],
+                "summary": row[5],
+                "host": row[6],
+                "processed_at": row[7]
+            })
+
+        # Get available hosts for filtering
+        cursor.execute("SELECT DISTINCT host FROM raw_logs WHERE host IS NOT NULL ORDER BY host")
+        available_hosts = [row[0] for row in cursor.fetchall()]
+
+    return {
+        "events": events,
+        "total": len(events),
+        "timeframe_hours": hours,
+        "available_hosts": available_hosts,
+        "filters": {
+            "host": host,
+            "severity": severity
+        }
+    }
+
+@app.get("/api/threat-briefing")
+@limiter.limit("10/minute")
+async def get_threat_briefing(request: Request):
+    """Generate AI-powered threat briefing summary"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Gather statistics for the briefing
+        cursor.execute("""
+            SELECT severity, COUNT(*) as count
+            FROM raw_logs
+            WHERE datetime(timestamp) > datetime('now', '-24 hours')
+            GROUP BY severity
+        """)
+        severity_stats = {row[0]: row[1] for row in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT event_type, COUNT(*) as count
+            FROM raw_logs
+            WHERE datetime(timestamp) > datetime('now', '-24 hours')
+            GROUP BY event_type
+            ORDER BY count DESC
+            LIMIT 5
+        """)
+        top_events = [{"type": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT host, COUNT(*) as count
+            FROM raw_logs
+            WHERE severity IN ('High', 'Critical')
+            AND datetime(timestamp) > datetime('now', '-24 hours')
+            GROUP BY host
+            ORDER BY count DESC
+            LIMIT 5
+        """)
+        targeted_hosts = [{"host": row[0], "alerts": row[1]} for row in cursor.fetchall()]
+
+        cursor.execute("SELECT COUNT(*) FROM incidents WHERE status = 'Open'")
+        open_incidents = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT mitre_attack_tactic, COUNT(*) as count
+            FROM alert_enrichment
+            WHERE datetime(created_at) > datetime('now', '-24 hours')
+            GROUP BY mitre_attack_tactic
+            ORDER BY count DESC
+            LIMIT 3
+        """)
+        top_tactics = [{"tactic": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+    # Generate briefing with AI
+    try:
+        client = Client(host=OLLAMA_URL)
+
+        briefing_prompt = f"""Generate a concise security threat briefing based on the following 24-hour statistics:
+
+Severity Distribution:
+- Critical: {severity_stats.get('Critical', 0)}
+- High: {severity_stats.get('High', 0)}
+- Medium: {severity_stats.get('Medium', 0)}
+- Low: {severity_stats.get('Low', 0)}
+
+Top Event Types: {', '.join([f"{e['type']} ({e['count']})" for e in top_events])}
+
+Most Targeted Hosts: {', '.join([f"{h['host']} ({h['alerts']} alerts)" for h in targeted_hosts])}
+
+Open Incidents: {open_incidents}
+
+Top MITRE ATT&CK Tactics: {', '.join([f"{t['tactic']} ({t['count']})" for t in top_tactics])}
+
+Provide a brief executive summary (3-4 sentences), key findings, and recommended actions. Be concise and actionable."""
+
+        response = client.chat(
+            model=OLLAMA_MODEL,
+            messages=[{"role": "user", "content": briefing_prompt}]
+        )
+        ai_summary = response['message']['content']
+    except Exception as e:
+        logger.error(f"Failed to generate AI briefing: {e}")
+        ai_summary = "AI briefing generation unavailable. Please check Ollama connection."
+
+    return {
+        "generated_at": datetime.datetime.now().isoformat(),
+        "period": "Last 24 hours",
+        "statistics": {
+            "severity_distribution": severity_stats,
+            "top_event_types": top_events,
+            "targeted_hosts": targeted_hosts,
+            "open_incidents": open_incidents,
+            "top_mitre_tactics": top_tactics
+        },
+        "ai_summary": ai_summary
+    }
+
+@app.get("/api/notifications")
+@limiter.limit("120/minute")
+async def get_notifications(request: Request, unread_only: bool = True):
+    """Get recent notifications/alerts for the dashboard"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get recent critical/high severity events as notifications
+        cursor.execute("""
+            SELECT id, timestamp, severity, event_type, ai_summary, host
+            FROM raw_logs
+            WHERE severity IN ('Critical', 'High')
+            AND datetime(timestamp) > datetime('now', '-1 hour')
+            ORDER BY timestamp DESC
+            LIMIT 10
+        """)
+
+        notifications = []
+        for row in cursor.fetchall():
+            severity = row[2]
+            notifications.append({
+                "id": row[0],
+                "timestamp": row[1],
+                "type": "alert",
+                "severity": severity,
+                "title": f"{severity} Alert: {row[3] or 'Security Event'}",
+                "message": row[4][:100] if row[4] else "New security event detected",
+                "host": row[5],
+                "read": False
+            })
+
+        # Also check for any new incidents
+        cursor.execute("""
+            SELECT id, title, severity, created_at
+            FROM incidents
+            WHERE datetime(created_at) > datetime('now', '-1 hour')
+            ORDER BY created_at DESC
+            LIMIT 5
+        """)
+
+        for row in cursor.fetchall():
+            notifications.append({
+                "id": f"incident-{row[0]}",
+                "timestamp": row[3],
+                "type": "incident",
+                "severity": row[2],
+                "title": f"New Incident: {row[1]}",
+                "message": f"Incident #{row[0]} has been created",
+                "read": False
+            })
+
+        # Sort by timestamp
+        notifications.sort(key=lambda x: x['timestamp'], reverse=True)
+
+    return {
+        "notifications": notifications[:15],
+        "total_unread": len(notifications),
+        "has_critical": any(n['severity'] == 'Critical' for n in notifications)
+    }
+
+@app.post("/api/incidents/{incident_id}/update-status")
+@limiter.limit("30/minute")
+async def update_incident_status(request: Request, incident_id: int, status: str):
+    """Update incident status for Kanban board"""
+    valid_statuses = ['Open', 'In Progress', 'Resolved', 'Closed']
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Update status and timestamps
+        if status == 'Resolved':
+            cursor.execute("""
+                UPDATE incidents
+                SET status = ?, updated_at = datetime('now'), resolved_at = datetime('now')
+                WHERE id = ?
+            """, (status, incident_id))
+        else:
+            cursor.execute("""
+                UPDATE incidents
+                SET status = ?, updated_at = datetime('now')
+                WHERE id = ?
+            """, (status, incident_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Incident not found")
+
+    return {"status": "success", "incident_id": incident_id, "new_status": status}
 
 # ==============================================================================
 # 13. Graceful Shutdown
