@@ -328,20 +328,4 @@ PUT /ai-analyzed-logs/_settings
 4. Push naar branch (`git push origin feature/geweldige-feature`)
 5. Open een Pull Request
 
-## Licentie
 
-[Jouw Licentie Hier]
-
-## Ondersteuning
-
-Voor problemen en vragen:
-- GitHub Issues: [jouw-repo/issues]
-- E-mail: support@axs-ict.nl
-- Documentatie: [jouw-docs-url]
-
-## Met Dank Aan
-
-- Ollama voor lokale LLM mogelijkheden
-- FastAPI voor het web framework
-- OpenSearch voor log indexering
-- Fluentd voor log verzameling
