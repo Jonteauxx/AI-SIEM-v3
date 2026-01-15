@@ -67,11 +67,3 @@ Open het dashboard: **http://localhost:8000**
 4. Push naar branch (`git push origin feature/geweldige-feature`)
 5. Open een Pull Request
 
-## Licentie
-
-[Jouw Licentie Hier]
-
-## Ondersteuning
-
-- GitHub Issues: [jouw-repo/issues]
-- E-mail: support@axs-ict.nl
