@@ -1242,6 +1242,7 @@
         <div class="nav-tab" onclick="switchTab('threats')">🚨 Threats</div>
         <div class="nav-tab" onclick="switchTab('timeline')">📅 Timeline</div>
         <div class="nav-tab" onclick="switchTab('mitre')">🎯 MITRE</div>
+        <div class="nav-tab" onclick="switchTab('severity')">⚖️ Severity</div>
         <div class="nav-tab" onclick="switchTab('hosts')">🖥️ Hosts</div>
         <div class="nav-tab" onclick="switchTab('incidents')">📋 Incidents</div>
         <div class="nav-tab" onclick="switchTab('compliance')">✅ Compliance</div>
@@ -1303,20 +1304,85 @@
             </div>
         </div>
 
-        <!-- Recent Logs Table -->
+        <!-- Log Search & Filter -->
         <div class="data-table">
             <div class="table-header">
-                <div class="table-title">Recent Security Events</div>
+                <div class="table-title">🔍 Security Event Search</div>
                 <div>
-                    <button class="btn" onclick="loadData()">🔄 Refresh</button>
+                    <button class="btn" onclick="searchLogs()">🔄 Refresh</button>
                     <button class="btn btn-secondary" onclick="exportLogs()">📥 Export</button>
                 </div>
             </div>
-            <div id="logs-container">
+
+            <!-- Search Filters -->
+            <div style="padding: 15px; background: var(--primary-bg); border-radius: 8px; margin: 10px 0;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Search Text</label>
+                        <input type="text" id="search-query" placeholder="Search in logs..."
+                               onkeypress="if(event.key==='Enter')searchLogs()"
+                               style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Severity</label>
+                        <select id="search-severity" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                            <option value="">All Severities</option>
+                            <option value="Critical">Critical</option>
+                            <option value="High">High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Host</label>
+                        <input type="text" id="search-host" placeholder="Filter by host..."
+                               style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Event Type</label>
+                        <select id="search-event-type" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                            <option value="">All Event Types</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Analyzed By</label>
+                        <select id="search-analyzer" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                            <option value="">All Analyzers</option>
+                            <option value="llm">LLM</option>
+                            <option value="knowledge_base">Knowledge Base</option>
+                            <option value="conditional_rule">Conditional Rule</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Status</label>
+                        <select id="search-status" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                            <option value="">All Status</option>
+                            <option value="PROCESSED">Processed</option>
+                            <option value="PENDING">Pending</option>
+                            <option value="ERROR">Error</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 12px; align-items: center;">
+                    <button class="btn" onclick="searchLogs()">🔍 Search</button>
+                    <button class="btn btn-secondary" onclick="clearSearchFilters()">Clear Filters</button>
+                    <span id="search-results-count" style="margin-left: auto; font-size: 0.9em; opacity: 0.8;"></span>
+                </div>
+            </div>
+
+            <!-- Results Table -->
+            <div id="logs-container" style="overflow-x: auto;">
                 <div class="loading">
                     <div class="spinner"></div>
                     Loading logs...
                 </div>
+            </div>
+
+            <!-- Pagination -->
+            <div id="pagination-container" style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 15px; border-top: 1px solid var(--border-color);">
+                <button class="btn btn-secondary" id="prev-page" onclick="changePage(-1)" disabled>← Previous</button>
+                <span id="page-info" style="font-size: 0.9em;">Page 1</span>
+                <button class="btn btn-secondary" id="next-page" onclick="changePage(1)">Next →</button>
             </div>
         </div>
     </div>
@@ -1404,6 +1470,145 @@
             </div>
             <div id="mitre-techniques-list" style="padding: 15px;">
                 <div class="loading">Loading techniques...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Severity Adjustments Tab -->
+    <div id="severity-tab" class="tab-content">
+        <h2 style="margin-bottom: 20px; color: var(--active-color);">⚖️ Severity Adjustments & Processing Performance</h2>
+
+        <!-- Stats Cards -->
+        <div class="metrics" style="margin-bottom: 20px;">
+            <div class="metric-card">
+                <div class="metric-label">Total Adjustments</div>
+                <div class="metric-value" id="total-adjustments">-</div>
+                <div class="metric-trend">All time</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Active Rules</div>
+                <div class="metric-value" id="active-rules">-</div>
+                <div class="metric-trend">Conditional</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Times Applied</div>
+                <div class="metric-value" id="rules-applied">-</div>
+                <div class="metric-trend">Auto-adjusted</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">LLM Avg Time</div>
+                <div class="metric-value" id="llm-avg-time">-</div>
+                <div class="metric-trend">Full analysis</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">KB Avg Time</div>
+                <div class="metric-value" id="kb-avg-time">-</div>
+                <div class="metric-trend">Knowledge base</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Speedup Factor</div>
+                <div class="metric-value" id="speedup-factor">-</div>
+                <div class="metric-trend">KB vs LLM</div>
+            </div>
+        </div>
+
+        <!-- Processing Time Chart -->
+        <div class="charts-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
+            <div class="chart-container" style="height: 220px;">
+                <div class="chart-title">Processing Time by Analyzer</div>
+                <canvas id="processingTimeChart"></canvas>
+            </div>
+            <div class="chart-container" style="height: 220px;">
+                <div class="chart-title">Recent Processing Times (ms)</div>
+                <canvas id="recentProcessingChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="data-table" style="margin-bottom: 20px;">
+            <div class="table-header">
+                <div class="table-title">Filter Adjustments</div>
+            </div>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; padding: 10px 0;">
+                <div>
+                    <label style="font-size: 0.9em; opacity: 0.8;">Host:</label>
+                    <input type="text" id="severity-host-filter" placeholder="Filter by host..."
+                           style="padding: 8px 12px; background: var(--primary-bg); border: 2px solid var(--border-color); border-radius: 6px; color: var(--text-color);">
+                </div>
+                <div>
+                    <label style="font-size: 0.9em; opacity: 0.8;">IP:</label>
+                    <input type="text" id="severity-ip-filter" placeholder="Filter by IP..."
+                           style="padding: 8px 12px; background: var(--primary-bg); border: 2px solid var(--border-color); border-radius: 6px; color: var(--text-color);">
+                </div>
+                <button class="btn" onclick="loadSeverityAdjustments()">🔍 Filter</button>
+                <button class="btn btn-secondary" onclick="clearSeverityFilters()">Clear</button>
+            </div>
+        </div>
+
+        <!-- Severity Change Statistics -->
+        <div class="data-table" style="margin-bottom: 20px;">
+            <div class="table-header">
+                <div class="table-title">Severity Change Statistics</div>
+            </div>
+            <div id="severity-change-stats" style="display: flex; flex-wrap: wrap; gap: 10px; padding: 15px;">
+                <div class="loading">Loading statistics...</div>
+            </div>
+        </div>
+
+        <!-- Adjustments Table -->
+        <div class="data-table">
+            <div class="table-header">
+                <div class="table-title">Severity Adjustments (Before → After)</div>
+                <button class="btn" onclick="loadSeverityAdjustments()">🔄 Refresh</button>
+            </div>
+            <div id="severity-adjustments-container" style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Host</th>
+                            <th>IP</th>
+                            <th>Before</th>
+                            <th>After</th>
+                            <th>Reason</th>
+                            <th>Conditions</th>
+                            <th>Applied</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody id="severity-adjustments-body">
+                        <tr><td colspan="10" class="loading">Loading adjustments...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Active Conditional Rules -->
+        <div class="data-table" style="margin-top: 20px;">
+            <div class="table-header">
+                <div class="table-title">Active Conditional Rules</div>
+            </div>
+            <div id="conditional-rules-container" style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Original</th>
+                            <th>Adjusted To</th>
+                            <th>Reason</th>
+                            <th>Host Filter</th>
+                            <th>IP Filter</th>
+                            <th>Exclude Hosts</th>
+                            <th>Expires</th>
+                            <th>Times Applied</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="conditional-rules-body">
+                        <tr><td colspan="10" class="loading">Loading rules...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -2106,10 +2311,219 @@
             if (tab === 'threats') loadCorrelatedEvents();
             if (tab === 'timeline') loadTimeline();
             if (tab === 'mitre') loadMITREMatrix();
+            if (tab === 'severity') loadSeverityTab();
             if (tab === 'hosts') loadHosts();
             if (tab === 'incidents') loadIncidentsKanban();
             if (tab === 'compliance') { loadCompliance(); loadSOCMetrics(); }
             if (tab === 'ai') loadAIStats();
+        }
+
+        // ============================================
+        // Severity Tab Functions
+        // ============================================
+        let processingTimeChart = null;
+        let recentProcessingChart = null;
+
+        async function loadSeverityTab() {
+            await Promise.all([
+                loadSeverityAdjustments(),
+                loadConditionalRules(),
+                loadProcessingTimeStats()
+            ]);
+        }
+
+        async function loadSeverityAdjustments() {
+            const host = document.getElementById('severity-host-filter')?.value || '';
+            const ip = document.getElementById('severity-ip-filter')?.value || '';
+
+            try {
+                let url = `${API_BASE}/severity-adjustments`;
+                const params = new URLSearchParams();
+                if (host) params.append('host', host);
+                if (ip) params.append('ip', ip);
+                if (params.toString()) url += '?' + params.toString();
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Update counter
+                document.getElementById('total-adjustments').textContent = data.total_adjustments || 0;
+
+                // Render change statistics
+                const statsContainer = document.getElementById('severity-change-stats');
+                if (data.change_statistics && data.change_statistics.length > 0) {
+                    statsContainer.innerHTML = data.change_statistics.map(stat => `
+                        <div style="background: var(--primary-bg); padding: 10px 15px; border-radius: 6px; border-left: 3px solid var(--active-color);">
+                            <span class="badge badge-${stat.from?.toLowerCase() || 'medium'}">${stat.from || 'N/A'}</span>
+                            → <span class="badge badge-${stat.to?.toLowerCase() || 'medium'}">${stat.to || 'N/A'}</span>
+                            <span style="margin-left: 10px; font-weight: bold;">${stat.count}x</span>
+                        </div>
+                    `).join('');
+                } else {
+                    statsContainer.innerHTML = '<div style="opacity: 0.7;">No adjustments yet</div>';
+                }
+
+                // Render adjustments table
+                const tbody = document.getElementById('severity-adjustments-body');
+                if (data.adjustments && data.adjustments.length > 0) {
+                    tbody.innerHTML = data.adjustments.map(adj => `
+                        <tr>
+                            <td>${adj.id}</td>
+                            <td>${adj.host || '-'}</td>
+                            <td>${adj.source_ip || '-'}</td>
+                            <td><span class="badge badge-${adj.original_severity?.toLowerCase() || 'medium'}">${adj.original_severity || 'N/A'}</span></td>
+                            <td><span class="badge badge-${adj.new_severity?.toLowerCase() || 'medium'}">${adj.new_severity || 'N/A'}</span></td>
+                            <td title="${adj.reason}">${adj.reason?.substring(0, 40) || '-'}${adj.reason?.length > 40 ? '...' : ''}</td>
+                            <td>
+                                ${adj.host_filter ? `<span title="Hosts: ${adj.host_filter}">🖥️</span>` : ''}
+                                ${adj.ip_filter ? `<span title="IPs: ${adj.ip_filter}">🌐</span>` : ''}
+                                ${adj.expires_at ? `<span title="Expires: ${adj.expires_at}">⏰</span>` : ''}
+                                ${adj.exclude_hosts ? `<span title="Excludes: ${adj.exclude_hosts}">🚫</span>` : ''}
+                                ${!adj.host_filter && !adj.ip_filter && !adj.expires_at && !adj.exclude_hosts ? 'Global' : ''}
+                            </td>
+                            <td>${adj.times_applied || 0}</td>
+                            <td>${adj.is_active ? '<span style="color: var(--active-color);">Active</span>' : '<span style="opacity: 0.5;">Inactive</span>'}</td>
+                            <td>${formatTimeAgo(adj.created_at)}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; opacity: 0.7;">No severity adjustments yet. Adjust log severity in the log detail modal.</td></tr>';
+                }
+
+            } catch (error) {
+                console.error('Failed to load severity adjustments:', error);
+            }
+        }
+
+        async function loadConditionalRules() {
+            try {
+                const response = await fetch(`${API_BASE}/conditional-rules`);
+                const data = await response.json();
+
+                document.getElementById('active-rules').textContent = data.total_rules || 0;
+                document.getElementById('rules-applied').textContent = data.total_times_applied || 0;
+
+                const tbody = document.getElementById('conditional-rules-body');
+                if (data.rules && data.rules.length > 0) {
+                    tbody.innerHTML = data.rules.map(rule => `
+                        <tr>
+                            <td>${rule.id}</td>
+                            <td><span class="badge badge-${rule.original_severity?.toLowerCase() || 'medium'}">${rule.original_severity || 'Any'}</span></td>
+                            <td><span class="badge badge-${rule.corrected_severity?.toLowerCase() || 'medium'}">${rule.corrected_severity}</span></td>
+                            <td title="${rule.reason}">${rule.reason?.substring(0, 30) || '-'}${rule.reason?.length > 30 ? '...' : ''}</td>
+                            <td>${rule.host_filter || '-'}</td>
+                            <td>${rule.ip_filter || '-'}</td>
+                            <td>${rule.exclude_hosts || '-'}</td>
+                            <td>${rule.expires_at ? new Date(rule.expires_at).toLocaleDateString() : 'Never'}</td>
+                            <td><strong>${rule.times_applied}</strong></td>
+                            <td>
+                                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.8em;"
+                                        onclick="deactivateRule(${rule.id})">Deactivate</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; opacity: 0.7;">No conditional rules active</td></tr>';
+                }
+
+            } catch (error) {
+                console.error('Failed to load conditional rules:', error);
+            }
+        }
+
+        async function loadProcessingTimeStats() {
+            try {
+                const response = await fetch(`${API_BASE}/processing-time-stats`);
+                const data = await response.json();
+
+                // Update metrics
+                const savings = data.time_savings || {};
+                document.getElementById('llm-avg-time').textContent = savings.llm_avg_ms ? `${Math.round(savings.llm_avg_ms)}ms` : '-';
+                document.getElementById('kb-avg-time').textContent = savings.knowledge_base_avg_ms ? `${Math.round(savings.knowledge_base_avg_ms)}ms` : '-';
+                document.getElementById('speedup-factor').textContent = savings.speedup_factor ? `${savings.speedup_factor}x` : '-';
+
+                // Processing Time by Analyzer Chart
+                const byAnalyzer = data.by_analyzer || [];
+                const ctx1 = document.getElementById('processingTimeChart').getContext('2d');
+                if (processingTimeChart) processingTimeChart.destroy();
+                processingTimeChart = new Chart(ctx1, {
+                    type: 'bar',
+                    data: {
+                        labels: byAnalyzer.map(a => a.analyzer === 'llm' ? 'LLM' : a.analyzer === 'knowledge_base' ? 'Knowledge Base' : a.analyzer === 'conditional_rule' ? 'Conditional' : a.analyzer),
+                        datasets: [{
+                            label: 'Avg Processing Time (ms)',
+                            data: byAnalyzer.map(a => a.avg_ms),
+                            backgroundColor: ['#ff6384', '#00ff73', '#36a2eb', '#ffce56'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#e0e0e0' } },
+                            x: { grid: { display: false }, ticks: { color: '#e0e0e0' } }
+                        }
+                    }
+                });
+
+                // Recent Processing Times Chart
+                const recent = data.recent_processing || [];
+                const ctx2 = document.getElementById('recentProcessingChart').getContext('2d');
+                if (recentProcessingChart) recentProcessingChart.destroy();
+                recentProcessingChart = new Chart(ctx2, {
+                    type: 'line',
+                    data: {
+                        labels: recent.map((_, i) => i + 1).reverse(),
+                        datasets: [{
+                            label: 'Processing Time (ms)',
+                            data: recent.map(r => r.processing_time_ms).reverse(),
+                            borderColor: '#00ff73',
+                            backgroundColor: 'rgba(0, 255, 115, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#e0e0e0' } },
+                            x: { grid: { display: false }, ticks: { color: '#e0e0e0' } }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Failed to load processing time stats:', error);
+            }
+        }
+
+        async function deactivateRule(ruleId) {
+            if (!confirm('Are you sure you want to deactivate this rule?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/conditional-rules/${ruleId}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    showToast('Rule deactivated', 'success');
+                    loadConditionalRules();
+                } else {
+                    showToast('Failed to deactivate rule', 'high');
+                }
+            } catch (error) {
+                showToast('Error deactivating rule', 'high');
+            }
+        }
+
+        function clearSeverityFilters() {
+            document.getElementById('severity-host-filter').value = '';
+            document.getElementById('severity-ip-filter').value = '';
+            loadSeverityAdjustments();
         }
 
         // Override loadIncidents to use Kanban
@@ -2309,42 +2723,147 @@
         }
 
         // Load Logs
+        // Search/Filter state
+        let currentPage = 0;
+        let pageSize = 50;
+        let totalLogs = 0;
+        let filterOptions = {};
+
         async function loadLogs() {
+            // Call searchLogs with default params
+            await searchLogs();
+        }
+
+        async function searchLogs(resetPage = true) {
+            if (resetPage) currentPage = 0;
+
             try {
-                const response = await fetch(`${API_BASE}/logs-all`);
-                const logs = await response.json();
-                currentLogs = logs;
+                const query = document.getElementById('search-query')?.value || '';
+                const severity = document.getElementById('search-severity')?.value || '';
+                const host = document.getElementById('search-host')?.value || '';
+                const eventType = document.getElementById('search-event-type')?.value || '';
+                const analyzer = document.getElementById('search-analyzer')?.value || '';
+                const status = document.getElementById('search-status')?.value || '';
 
-                if (logs.length === 0) {
-                    document.getElementById('logs-container').innerHTML =
-                        '<div class="loading">No logs found. Run generate_demo_data.py to create sample data.</div>';
-                    return;
-                }
+                const params = new URLSearchParams();
+                if (query) params.append('query', query);
+                if (severity) params.append('severity', severity);
+                if (host) params.append('host', host);
+                if (eventType) params.append('event_type', eventType);
+                if (analyzer) params.append('analyzed_by', analyzer);
+                if (status) params.append('status', status);
+                params.append('limit', pageSize);
+                params.append('offset', currentPage * pageSize);
 
-                let html = '<table><thead><tr><th>ID</th><th>Severity</th><th>Host</th><th>Timestamp</th><th>Event Type</th><th>Summary</th></tr></thead><tbody>';
+                const response = await fetch(`${API_BASE}/logs-search?${params.toString()}`);
+                const data = await response.json();
 
-                logs.slice(0, 50).forEach((log, index) => {
-                    const severity = log.Severity || 'Unknown';
-                    const severityClass = severity.toLowerCase();
-                    const timestamp = new Date(log.Timestamp).toLocaleString();
+                currentLogs = data.logs || [];
+                totalLogs = data.total || 0;
+                filterOptions = data.filters || {};
 
-                    html += `<tr onclick="showLogDetail(${index})" style="cursor: pointer;">
-                        <td>${log.TLID}</td>
-                        <td><span class="badge badge-${severityClass}">${severity}</span></td>
-                        <td>${log.HOST || 'N/A'}</td>
-                        <td>${timestamp}</td>
-                        <td>${log['Event Type'] || 'N/A'}</td>
-                        <td>${(log['AI Summary'] || '').substring(0, 80)}...</td>
-                    </tr>`;
-                });
+                // Update filter dropdowns with available options
+                updateFilterDropdowns();
 
-                html += '</tbody></table>';
-                document.getElementById('logs-container').innerHTML = html;
+                // Update results count
+                document.getElementById('search-results-count').textContent =
+                    `Showing ${currentLogs.length} of ${totalLogs} logs`;
+
+                // Update pagination
+                updatePagination();
+
+                // Render table
+                renderLogsTable();
+
             } catch (error) {
-                console.error('Error loading logs:', error);
+                console.error('Error searching logs:', error);
                 document.getElementById('logs-container').innerHTML =
                     '<div class="loading" style="color: #ff4d4d;">Error loading logs. Please check the backend.</div>';
             }
+        }
+
+        function updateFilterDropdowns() {
+            // Update event type dropdown
+            const eventTypeSelect = document.getElementById('search-event-type');
+            const currentEventType = eventTypeSelect?.value;
+            if (eventTypeSelect && filterOptions.event_types) {
+                eventTypeSelect.innerHTML = '<option value="">All Event Types</option>' +
+                    filterOptions.event_types.map(et =>
+                        `<option value="${et}" ${et === currentEventType ? 'selected' : ''}>${et}</option>`
+                    ).join('');
+            }
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(totalLogs / pageSize);
+            document.getElementById('page-info').textContent =
+                `Page ${currentPage + 1} of ${totalPages || 1} (${totalLogs} total)`;
+
+            document.getElementById('prev-page').disabled = currentPage === 0;
+            document.getElementById('next-page').disabled = currentPage >= totalPages - 1;
+        }
+
+        function changePage(delta) {
+            currentPage += delta;
+            searchLogs(false);
+        }
+
+        function clearSearchFilters() {
+            document.getElementById('search-query').value = '';
+            document.getElementById('search-severity').value = '';
+            document.getElementById('search-host').value = '';
+            document.getElementById('search-event-type').value = '';
+            document.getElementById('search-analyzer').value = '';
+            document.getElementById('search-status').value = '';
+            searchLogs();
+        }
+
+        function renderLogsTable() {
+            if (currentLogs.length === 0) {
+                document.getElementById('logs-container').innerHTML =
+                    '<div class="loading">No logs found matching your criteria.</div>';
+                return;
+            }
+
+            let html = `<table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Severity</th>
+                        <th>Host</th>
+                        <th>Timestamp</th>
+                        <th>Event Type</th>
+                        <th>Analyzer</th>
+                        <th>Time (ms)</th>
+                        <th>Summary</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            currentLogs.forEach((log, index) => {
+                const severity = log.Severity || 'Unknown';
+                const severityClass = severity.toLowerCase();
+                const timestamp = new Date(log.Timestamp).toLocaleString();
+                const processingTime = log['Processing Time (ms)'];
+                const analyzer = log['Analyzed By'] || 'N/A';
+                const analyzerBadge = analyzer === 'llm' ? 'badge-high' :
+                                      analyzer === 'knowledge_base' ? 'badge-low' :
+                                      analyzer === 'conditional_rule' ? 'badge-medium' : '';
+
+                html += `<tr onclick="showLogDetail(${index})" style="cursor: pointer;">
+                    <td>${log.TLID}</td>
+                    <td><span class="badge badge-${severityClass}">${severity}</span></td>
+                    <td>${log.HOST || 'N/A'}</td>
+                    <td>${timestamp}</td>
+                    <td>${log['Event Type'] || 'N/A'}</td>
+                    <td><span class="badge ${analyzerBadge}" style="font-size: 0.75em;">${analyzer}</span></td>
+                    <td>${processingTime !== null ? processingTime : '-'}</td>
+                    <td title="${log['AI Summary'] || ''}">${(log['AI Summary'] || '').substring(0, 60)}${(log['AI Summary'] || '').length > 60 ? '...' : ''}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('logs-container').innerHTML = html;
         }
 
         // Show Log Detail with Enrichment
@@ -2374,17 +2893,58 @@
                             <div class="enrichment-label">🆔 Log ID</div>
                             <div class="enrichment-value">${log.TLID}</div>
                         </div>
-                        <div class="enrichment-card">
-                            <div class="enrichment-label">⚠️ Severity</div>
+                        <div class="enrichment-card" style="grid-column: span 2;">
+                            <div class="enrichment-label">⚠️ Adjust Severity (AI will learn from this)</div>
                             <div class="enrichment-value" id="severity-display">
                                 <span class="badge badge-${(log.Severity || '').toLowerCase()}">${log.Severity || 'Unknown'}</span>
                             </div>
                             <div class="severity-buttons">
-                                <button class="severity-btn low ${currentSeverity === 'low' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Low')">Low</button>
-                                <button class="severity-btn medium ${currentSeverity === 'medium' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Medium')">Medium</button>
-                                <button class="severity-btn high ${currentSeverity === 'high' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'High')">High</button>
-                                <button class="severity-btn critical ${currentSeverity === 'critical' ? 'active' : ''}" onclick="changeSeverity(${log.TLID}, 'Critical')">Critical</button>
+                                <button class="severity-btn low ${currentSeverity === 'low' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Low', '${log.HOST || ''}')">Low</button>
+                                <button class="severity-btn medium ${currentSeverity === 'medium' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Medium', '${log.HOST || ''}')">Medium</button>
+                                <button class="severity-btn high ${currentSeverity === 'high' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'High', '${log.HOST || ''}')">High</button>
+                                <button class="severity-btn critical ${currentSeverity === 'critical' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Critical', '${log.HOST || ''}')">Critical</button>
                             </div>
+
+                            <!-- Conditional Options -->
+                            <div style="margin-top: 15px;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9em;">
+                                    <input type="checkbox" id="show-conditions" onchange="toggleConditions()">
+                                    Show advanced conditions (host-specific, time-limited, etc.)
+                                </label>
+                            </div>
+
+                            <div id="condition-options" style="display: none; margin-top: 15px; padding: 15px; background: var(--primary-bg); border-radius: 8px; border: 1px solid var(--border-color);">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                    <div>
+                                        <label style="font-size: 0.85em; opacity: 0.8;">Apply only to hosts (comma-separated):</label>
+                                        <input type="text" id="cond-host-filter" placeholder="e.g., web-server-01, db-primary"
+                                               value="${log.HOST || ''}"
+                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 0.85em; opacity: 0.8;">Apply only to IPs (comma-separated):</label>
+                                        <input type="text" id="cond-ip-filter" placeholder="e.g., 192.168.1.100"
+                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 0.85em; opacity: 0.8;">Exclude hosts from this rule:</label>
+                                        <input type="text" id="cond-exclude-hosts" placeholder="e.g., critical-server-01"
+                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 0.85em; opacity: 0.8;">Expires in (days):</label>
+                                        <input type="number" id="cond-expires-days" placeholder="e.g., 20 (for SSL expires)"
+                                               min="1" max="365"
+                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
+                                    </div>
+                                </div>
+                                <div style="margin-top: 12px;">
+                                    <label style="font-size: 0.85em; opacity: 0.8;">Reason for adjustment:</label>
+                                    <textarea id="cond-reason" placeholder="e.g., SSL cert renewal is scheduled, low priority for now"
+                                              style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); min-height: 60px; resize: vertical;"></textarea>
+                                </div>
+                            </div>
+
                             <div class="learn-message" id="learn-message"></div>
                         </div>
                         <div class="enrichment-card">
@@ -2987,11 +3547,40 @@
         }
 
         // Change Severity and AI Learning
-        async function changeSeverity(logId, newSeverity) {
-            const learnMsg = document.getElementById('learn-message');
+        // Store selected severity for conditional apply
+        let selectedLogId = null;
+        let selectedSeverity = null;
+        let selectedHost = null;
+
+        function toggleConditions() {
+            const condOptions = document.getElementById('condition-options');
+            const showCond = document.getElementById('show-conditions');
+            condOptions.style.display = showCond.checked ? 'block' : 'none';
+        }
+
+        function selectSeverity(logId, newSeverity, host) {
+            selectedLogId = logId;
+            selectedSeverity = newSeverity;
+            selectedHost = host;
 
             document.querySelectorAll('.severity-btn').forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
+
+            const showConditions = document.getElementById('show-conditions')?.checked;
+            if (showConditions) {
+                // Don't auto-apply if conditions are shown - user needs to configure
+                const learnMsg = document.getElementById('learn-message');
+                learnMsg.innerHTML = `Selected: <strong>${newSeverity}</strong>. Configure conditions below, then click Apply.
+                    <br><button class="btn" style="margin-top: 10px;" onclick="applyConditionalSeverity()">Apply Conditional Rule</button>`;
+                learnMsg.classList.add('show');
+            } else {
+                // Apply immediately without conditions
+                changeSeverity(logId, newSeverity);
+            }
+        }
+
+        async function changeSeverity(logId, newSeverity) {
+            const learnMsg = document.getElementById('learn-message');
 
             try {
                 const response = await fetch(`${API_BASE}/learn`, {
@@ -3026,6 +3615,73 @@
             } catch (error) {
                 console.error('Error learning severity:', error);
                 learnMsg.textContent = '❌ Error updating severity. Please try again.';
+                learnMsg.style.backgroundColor = 'rgba(255, 77, 77, 0.1)';
+                learnMsg.style.borderColor = 'var(--high-severity)';
+                learnMsg.classList.add('show');
+            }
+        }
+
+        async function applyConditionalSeverity() {
+            if (!selectedLogId || !selectedSeverity) {
+                showToast('Please select a severity first', 'high');
+                return;
+            }
+
+            const learnMsg = document.getElementById('learn-message');
+            const hostFilter = document.getElementById('cond-host-filter')?.value.trim() || null;
+            const ipFilter = document.getElementById('cond-ip-filter')?.value.trim() || null;
+            const excludeHosts = document.getElementById('cond-exclude-hosts')?.value.trim() || null;
+            const expiresDays = document.getElementById('cond-expires-days')?.value || null;
+            const reason = document.getElementById('cond-reason')?.value.trim() ||
+                           `Conditional severity adjustment to ${selectedSeverity}`;
+
+            try {
+                const response = await fetch(`${API_BASE}/learn-conditional`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        log_id: selectedLogId,
+                        new_severity: selectedSeverity,
+                        reason: reason,
+                        host_filter: hostFilter,
+                        ip_filter: ipFilter,
+                        expires_in_days: expiresDays ? parseInt(expiresDays) : null,
+                        exclude_hosts: excludeHosts
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    let msg = `✅ Conditional rule created! ${data.original_severity} → ${data.new_severity}`;
+                    if (hostFilter) msg += ` (hosts: ${hostFilter})`;
+                    if (ipFilter) msg += ` (IPs: ${ipFilter})`;
+                    if (data.expires_at) msg += ` (expires: ${new Date(data.expires_at).toLocaleDateString()})`;
+                    if (excludeHosts) msg += ` (excludes: ${excludeHosts})`;
+
+                    learnMsg.innerHTML = msg;
+                    learnMsg.style.backgroundColor = 'rgba(0, 255, 115, 0.1)';
+                    learnMsg.style.borderColor = 'var(--active-color)';
+                    learnMsg.classList.add('show');
+
+                    const severityDisplay = document.getElementById('severity-display');
+                    const severityClass = selectedSeverity.toLowerCase();
+                    severityDisplay.innerHTML = `<span class="badge badge-${severityClass}">${selectedSeverity}</span>`;
+
+                    showToast('Conditional severity rule created', 'success');
+
+                    setTimeout(() => {
+                        loadData();
+                    }, 2000);
+                } else {
+                    learnMsg.textContent = `⚠️ Failed: ${data.detail || 'Unknown error'}`;
+                    learnMsg.style.backgroundColor = 'rgba(255, 77, 77, 0.1)';
+                    learnMsg.style.borderColor = 'var(--high-severity)';
+                    learnMsg.classList.add('show');
+                }
+            } catch (error) {
+                console.error('Error creating conditional rule:', error);
+                learnMsg.textContent = '❌ Error creating conditional rule. Please try again.';
                 learnMsg.style.backgroundColor = 'rgba(255, 77, 77, 0.1)';
                 learnMsg.style.borderColor = 'var(--high-severity)';
                 learnMsg.classList.add('show');

@@ -151,6 +151,47 @@ def init_db():
             )
         """)
 
+        # Severity Adjustments - Track all severity changes with conditions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS severity_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER,
+                pattern_hash TEXT,
+                original_severity TEXT NOT NULL,
+                new_severity TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                adjusted_by TEXT DEFAULT 'user',
+                host_filter TEXT,
+                ip_filter TEXT,
+                expires_at TEXT,
+                exclude_hosts TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                times_applied INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (log_id) REFERENCES raw_logs(id)
+            )
+        """)
+
+        # Extended AI Knowledge with conditions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ai_knowledge_conditions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_hash TEXT NOT NULL,
+                original_severity TEXT,
+                corrected_severity TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                host_filter TEXT,
+                ip_filter TEXT,
+                expires_at TEXT,
+                exclude_hosts TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                times_applied INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(pattern_hash, host_filter, ip_filter)
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS processing_errors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -297,6 +338,14 @@ def init_db():
             )
         """)
 
+        # Add processing_time_ms column to raw_logs if not exists
+        cursor.execute("PRAGMA table_info(raw_logs)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'processing_time_ms' not in columns:
+            cursor.execute("ALTER TABLE raw_logs ADD COLUMN processing_time_ms INTEGER")
+        if 'original_severity' not in columns:
+            cursor.execute("ALTER TABLE raw_logs ADD COLUMN original_severity TEXT")
+
         # Create indexes for new tables
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_enrichment_log_id ON alert_enrichment(log_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_enrichment_threat_score ON alert_enrichment(threat_score)")
@@ -307,6 +356,10 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_actions_status ON response_actions(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_correlated_events_rule_id ON correlated_events(correlation_rule_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_severity_adjustments_pattern ON severity_adjustments(pattern_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_severity_adjustments_active ON severity_adjustments(is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_knowledge_conditions_pattern ON ai_knowledge_conditions(pattern_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_knowledge_conditions_active ON ai_knowledge_conditions(is_active)")
 
         # Insert default correlation rules
         cursor.execute("""
@@ -829,37 +882,69 @@ def handle_fluentd_connection(conn, addr):
             unpacker.feed(data)
 
             for unpacked_message in unpacker:
-                if len(unpacked_message) < 2:
-                    continue
+                logs_to_insert = []
 
-                entries = unpacked_message[1]
+                # Handle different msgpack formats
+                if isinstance(unpacked_message, (list, tuple)):
+                    if len(unpacked_message) >= 2:
+                        # FluentD Forward format: [tag, entries] or [tag, [[timestamp, record], ...]]
+                        tag = unpacked_message[0]
+                        entries = unpacked_message[1]
 
-                if isinstance(entries, bytes):
-                    sub_unpacker = msgpack.Unpacker(
-                        io.BytesIO(entries),
-                        raw=True,
-                        ext_hook=msgpack_ext_decoder
-                    )
-                    entries = list(sub_unpacker)
+                        if isinstance(entries, bytes):
+                            # Packed entries - unpack them
+                            sub_unpacker = msgpack.Unpacker(
+                                io.BytesIO(entries),
+                                raw=True,
+                                ext_hook=msgpack_ext_decoder
+                            )
+                            entries = list(sub_unpacker)
 
-                with get_db() as conn_db:
-                    cursor = conn_db.cursor()
-                    for timestamp, record in entries:
-                        raw_log_data = record.get(b'message', record)
-                        msg = decode_bytes(raw_log_data)
+                        if isinstance(entries, (list, tuple)):
+                            for entry in entries:
+                                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                                    timestamp, record = entry[0], entry[1]
+                                    if isinstance(record, dict):
+                                        raw_log_data = record.get(b'message', record.get('message', str(record)))
+                                        logs_to_insert.append(decode_bytes(raw_log_data))
+                                    else:
+                                        logs_to_insert.append(decode_bytes(record))
+                                elif isinstance(entry, (bytes, str)):
+                                    logs_to_insert.append(decode_bytes(entry))
+                        elif isinstance(entries, dict):
+                            # Single record format: [tag, record]
+                            raw_log_data = entries.get(b'message', entries.get('message', str(entries)))
+                            logs_to_insert.append(decode_bytes(raw_log_data))
+                    elif len(unpacked_message) == 1:
+                        # Just a single message
+                        logs_to_insert.append(decode_bytes(unpacked_message[0]))
+                elif isinstance(unpacked_message, dict):
+                    # Direct record format
+                    raw_log_data = unpacked_message.get(b'message', unpacked_message.get('message', str(unpacked_message)))
+                    logs_to_insert.append(decode_bytes(raw_log_data))
+                elif isinstance(unpacked_message, (bytes, str)):
+                    # Plain string/bytes
+                    logs_to_insert.append(decode_bytes(unpacked_message))
 
-                        cursor.execute(
-                            "INSERT INTO raw_logs (timestamp, raw_log, status) VALUES (?, ?, ?)",
-                            (datetime.datetime.now().isoformat(), str(msg), 'PENDING')
-                        )
+                # Insert logs into database
+                if logs_to_insert:
+                    with get_db() as conn_db:
+                        cursor = conn_db.cursor()
+                        for msg in logs_to_insert:
+                            if msg and msg.strip():
+                                cursor.execute(
+                                    "INSERT INTO raw_logs (timestamp, raw_log, status) VALUES (?, ?, ?)",
+                                    (datetime.datetime.now().isoformat(), str(msg), 'PENDING')
+                                )
+                        conn_db.commit()
 
-                    conn_db.commit()
-
-                update_global_counts()
-                logger.info(f"Ingested {len(entries)} logs from {addr}")
+                    update_global_counts()
+                    logger.info(f"Ingested {len(logs_to_insert)} logs from {addr}")
 
     except Exception as e:
         logger.error(f"Ingestor connection error from {addr}: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
     finally:
         conn.close()
 
@@ -887,9 +972,91 @@ def tcp_ingestor_thread():
 # ==============================================================================
 # 10. Log Processor
 # ==============================================================================
-def analyze_logic(raw_log: str) -> Dict[str, Any]:
+def check_conditional_rules(raw_log: str, log_hash: str, host: str, source_ip: str) -> Optional[Dict[str, Any]]:
+    """Check if any conditional severity rules apply to this log."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get all active conditional rules for this pattern
+        cursor.execute("""
+            SELECT id, original_severity, corrected_severity, reason,
+                   host_filter, ip_filter, expires_at, exclude_hosts, times_applied
+            FROM ai_knowledge_conditions
+            WHERE pattern_hash = ? AND is_active = 1
+            ORDER BY created_at DESC
+        """, (log_hash,))
+
+        rules = cursor.fetchall()
+
+        for rule in rules:
+            rule_id, orig_sev, new_sev, reason, host_filter, ip_filter, expires_at, exclude_hosts, times_applied = rule
+
+            # Check expiration
+            if expires_at:
+                try:
+                    expiry_date = datetime.datetime.fromisoformat(expires_at)
+                    if datetime.datetime.now() > expiry_date:
+                        # Rule expired, deactivate it
+                        cursor.execute("UPDATE ai_knowledge_conditions SET is_active = 0 WHERE id = ?", (rule_id,))
+                        conn.commit()
+                        logger.info(f"Conditional rule {rule_id} expired, deactivating")
+                        continue
+                except:
+                    pass
+
+            # Check exclude_hosts
+            if exclude_hosts:
+                excluded = [h.strip().lower() for h in exclude_hosts.split(',')]
+                if host and host.lower() in excluded:
+                    logger.info(f"Host {host} is excluded from rule {rule_id}")
+                    continue
+
+            # Check host_filter
+            if host_filter:
+                allowed_hosts = [h.strip().lower() for h in host_filter.split(',')]
+                if host and host.lower() not in allowed_hosts:
+                    continue  # Host doesn't match filter
+
+            # Check ip_filter
+            if ip_filter:
+                allowed_ips = [ip.strip() for ip in ip_filter.split(',')]
+                if source_ip and source_ip not in allowed_ips:
+                    continue  # IP doesn't match filter
+
+            # Rule matches! Update counter and return
+            cursor.execute("""
+                UPDATE ai_knowledge_conditions
+                SET times_applied = times_applied + 1, updated_at = ?
+                WHERE id = ?
+            """, (datetime.datetime.now().isoformat(), rule_id))
+            conn.commit()
+
+            logger.info(f"Applied conditional rule {rule_id} (applied {times_applied + 1} times)")
+            return {
+                "severity": new_sev,
+                "original_severity": orig_sev,
+                "event_type": "Conditional Rule",
+                "summary": f"Severity adjusted by conditional rule. Reason: {reason}",
+                "analyzed_by": "conditional_rule",
+                "rule_id": rule_id
+            }
+
+        return None
+
+def analyze_logic(raw_log: str, host: str = None, source_ip: str = None) -> Dict[str, Any]:
+    """Analyze a log entry using knowledge base or LLM."""
     log_hash = get_log_hash(raw_log)
 
+    # Extract IP from log if not provided
+    if not source_ip:
+        source_ip = extract_ip_from_log(raw_log)
+
+    # First check conditional rules (with host/IP/expiry conditions)
+    conditional_result = check_conditional_rules(raw_log, log_hash, host, source_ip)
+    if conditional_result:
+        return conditional_result
+
+    # Then check basic knowledge base
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -950,18 +1117,26 @@ def processor_loop():
                     try:
                         logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{MAX_RETRIES})...")
 
-                        # Analyze the log
-                        analysis = analyze_logic(raw_log)
-
-                        # Extract host from log
+                        # Extract host from log first (needed for conditional rules)
                         extracted_host = extract_host_from_log(raw_log)
+                        source_ip = extract_ip_from_log(raw_log)
+
+                        # Measure processing time
+                        start_time = time.time()
+
+                        # Analyze the log with host context for conditional rules
+                        analysis = analyze_logic(raw_log, host=extracted_host, source_ip=source_ip)
+
+                        # Calculate processing time in milliseconds
+                        processing_time_ms = int((time.time() - start_time) * 1000)
 
                         # Enrich analysis with metadata
                         analysis.update({
                             "raw_log": raw_log,
                             "@timestamp": datetime.datetime.now().isoformat(),
                             "db_id": log_id,
-                            "host": extracted_host
+                            "host": extracted_host,
+                            "processing_time_ms": processing_time_ms
                         })
 
                         # Index to OpenSearch (non-blocking)
@@ -982,7 +1157,9 @@ def processor_loop():
                                        event_type=?,
                                        ai_summary=?,
                                        analyzed_by=?,
-                                       host=?
+                                       host=?,
+                                       processing_time_ms=?,
+                                       original_severity=?
                                    WHERE id=?""",
                                 (
                                     datetime.datetime.now().isoformat(),
@@ -991,10 +1168,16 @@ def processor_loop():
                                     analysis.get('summary', 'No summary'),
                                     analysis.get('analyzed_by', 'llm'),
                                     extracted_host,
+                                    processing_time_ms,
+                                    analysis.get('original_severity'),
                                     log_id
                                 )
                             )
                             conn_upd.commit()
+
+                        # Log processing time for visibility
+                        analyzer = analysis.get('analyzed_by', 'llm')
+                        logger.info(f"⏱️ Log {log_id} processed in {processing_time_ms}ms by {analyzer}")
 
                         # Update global counts
                         update_global_counts()
@@ -1064,6 +1247,15 @@ class FeedbackRequest(BaseModel):
     log_id: int = Field(..., gt=0)
     new_severity: str = Field(..., pattern="^(Low|Medium|High|Critical)$")
     reason: str = Field(..., min_length=5, max_length=500)
+
+class ConditionalFeedbackRequest(BaseModel):
+    log_id: int = Field(..., gt=0)
+    new_severity: str = Field(..., pattern="^(Low|Medium|High|Critical)$")
+    reason: str = Field(..., min_length=5, max_length=500)
+    host_filter: Optional[str] = Field(None, description="Comma-separated list of hosts to apply this rule to")
+    ip_filter: Optional[str] = Field(None, description="Comma-separated list of IPs to apply this rule to")
+    expires_in_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until this rule expires")
+    exclude_hosts: Optional[str] = Field(None, description="Comma-separated list of hosts to exclude from this rule")
 
 # ==============================================================================
 # 12. API Endpoints
@@ -1276,13 +1468,131 @@ async def get_logs(request: Request, panel: str = "Total Logs"):
         "AI Summary": row['ai_summary'] or 'Analyzed'
     } for row in rows]
 
+@app.get("/api/logs-search")
+@limiter.limit("100/minute")
+async def search_logs(
+    request: Request,
+    query: str = None,
+    severity: str = None,
+    host: str = None,
+    event_type: str = None,
+    status: str = None,
+    analyzed_by: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """Search and filter logs with various criteria."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Build dynamic query
+        conditions = []
+        params = []
+
+        if query:
+            conditions.append("(raw_log LIKE ? OR ai_summary LIKE ?)")
+            params.extend([f"%{query}%", f"%{query}%"])
+
+        if severity:
+            severities = [s.strip() for s in severity.split(',')]
+            placeholders = ','.join(['?' for _ in severities])
+            conditions.append(f"severity IN ({placeholders})")
+            params.extend(severities)
+
+        if host:
+            conditions.append("host LIKE ?")
+            params.append(f"%{host}%")
+
+        if event_type:
+            conditions.append("event_type LIKE ?")
+            params.append(f"%{event_type}%")
+
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+
+        if analyzed_by:
+            conditions.append("analyzed_by = ?")
+            params.append(analyzed_by)
+
+        if date_from:
+            conditions.append("timestamp >= ?")
+            params.append(date_from)
+
+        if date_to:
+            conditions.append("timestamp <= ?")
+            params.append(date_to)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        # Get total count for pagination
+        count_query = f"SELECT COUNT(*) FROM raw_logs WHERE {where_clause}"
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()[0]
+
+        # Get filtered results
+        query_sql = f"""
+            SELECT
+                id, raw_log, timestamp, processed_at, severity,
+                event_type, ai_summary, analyzed_by, host, status,
+                processing_time_ms, original_severity
+            FROM raw_logs
+            WHERE {where_clause}
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        cursor.execute(query_sql, params)
+        rows = cursor.fetchall()
+
+        # Get filter options (distinct values)
+        cursor.execute("SELECT DISTINCT severity FROM raw_logs WHERE severity IS NOT NULL ORDER BY severity")
+        severities = [r[0] for r in cursor.fetchall()]
+
+        cursor.execute("SELECT DISTINCT host FROM raw_logs WHERE host IS NOT NULL AND host != 'Unknown' ORDER BY host LIMIT 50")
+        hosts = [r[0] for r in cursor.fetchall()]
+
+        cursor.execute("SELECT DISTINCT event_type FROM raw_logs WHERE event_type IS NOT NULL ORDER BY event_type")
+        event_types = [r[0] for r in cursor.fetchall()]
+
+        cursor.execute("SELECT DISTINCT analyzed_by FROM raw_logs WHERE analyzed_by IS NOT NULL ORDER BY analyzed_by")
+        analyzers = [r[0] for r in cursor.fetchall()]
+
+    return {
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+        "filters": {
+            "severities": severities,
+            "hosts": hosts,
+            "event_types": event_types,
+            "analyzers": analyzers
+        },
+        "logs": [{
+            "TLID": row[0],
+            "Raw Log": row[1],
+            "Timestamp": row[2],
+            "Processed At": row[3],
+            "Severity": row[4] or 'Unknown',
+            "Event Type": row[5] or 'Unknown',
+            "AI Summary": row[6] or ('Pending...' if row[9] == 'PENDING' else 'Processed'),
+            "Analyzed By": row[7] or 'N/A',
+            "HOST": row[8] or 'Unknown',
+            "Status": row[9],
+            "Processing Time (ms)": row[10],
+            "Original Severity": row[11]
+        } for row in rows]
+    }
+
 @app.get("/api/logs-all")
 @limiter.limit("100/minute")
 async def get_logs_all(request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT 
+            SELECT
                 id,
                 raw_log,
                 timestamp,
@@ -1293,8 +1603,8 @@ async def get_logs_all(request: Request):
                 analyzed_by,
                 host,
                 status
-            FROM raw_logs 
-            ORDER BY timestamp DESC 
+            FROM raw_logs
+            ORDER BY timestamp DESC
             LIMIT 200
         """)
         rows = cursor.fetchall()
@@ -1391,6 +1701,293 @@ async def learn(request: Request, req: FeedbackRequest):
         "message": "AI knowledge base updated",
         "pattern_hash": log_hash
     }
+
+@app.post("/api/learn-conditional")
+@limiter.limit("10/minute")
+async def learn_conditional(request: Request, req: ConditionalFeedbackRequest):
+    """Learn from feedback with conditional rules (host-specific, time-limited, etc.)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get log details
+        cursor.execute("SELECT raw_log, severity, host FROM raw_logs WHERE id=?", (req.log_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Log not found")
+
+        raw_log = row['raw_log']
+        original_severity = row['severity']
+        host = row['host']
+        log_hash = get_log_hash(raw_log)
+
+        # Calculate expiry date if specified
+        expires_at = None
+        if req.expires_in_days:
+            expires_at = (datetime.datetime.now() + datetime.timedelta(days=req.expires_in_days)).isoformat()
+
+        # Insert conditional rule
+        cursor.execute("""
+            INSERT INTO ai_knowledge_conditions
+            (pattern_hash, original_severity, corrected_severity, reason,
+             host_filter, ip_filter, expires_at, exclude_hosts, is_active, times_applied)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+        """, (
+            log_hash,
+            original_severity,
+            req.new_severity,
+            req.reason,
+            req.host_filter,
+            req.ip_filter,
+            expires_at,
+            req.exclude_hosts
+        ))
+
+        rule_id = cursor.lastrowid
+
+        # Record the severity adjustment
+        cursor.execute("""
+            INSERT INTO severity_adjustments
+            (log_id, pattern_hash, original_severity, new_severity, reason,
+             host_filter, ip_filter, expires_at, exclude_hosts, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        """, (
+            req.log_id,
+            log_hash,
+            original_severity,
+            req.new_severity,
+            req.reason,
+            req.host_filter,
+            req.ip_filter,
+            expires_at,
+            req.exclude_hosts
+        ))
+
+        conn.commit()
+
+    logger.info(f"Conditional rule created for log {req.log_id}: {original_severity} -> {req.new_severity}")
+
+    return {
+        "status": "success",
+        "message": "Conditional severity rule created",
+        "rule_id": rule_id,
+        "pattern_hash": log_hash,
+        "original_severity": original_severity,
+        "new_severity": req.new_severity,
+        "expires_at": expires_at,
+        "conditions": {
+            "host_filter": req.host_filter,
+            "ip_filter": req.ip_filter,
+            "exclude_hosts": req.exclude_hosts
+        }
+    }
+
+@app.get("/api/severity-adjustments")
+@limiter.limit("60/minute")
+async def get_severity_adjustments(request: Request, host: str = None, ip: str = None):
+    """Get all severity adjustments with before/after view, filterable by host and IP."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                sa.id,
+                sa.log_id,
+                sa.pattern_hash,
+                sa.original_severity,
+                sa.new_severity,
+                sa.reason,
+                sa.host_filter,
+                sa.ip_filter,
+                sa.expires_at,
+                sa.exclude_hosts,
+                sa.is_active,
+                sa.times_applied,
+                sa.created_at,
+                rl.raw_log,
+                rl.host,
+                ae.source_ip
+            FROM severity_adjustments sa
+            LEFT JOIN raw_logs rl ON sa.log_id = rl.id
+            LEFT JOIN alert_enrichment ae ON sa.log_id = ae.log_id
+            WHERE 1=1
+        """
+        params = []
+
+        if host:
+            query += " AND (rl.host = ? OR sa.host_filter LIKE ?)"
+            params.extend([host, f"%{host}%"])
+
+        if ip:
+            query += " AND (ae.source_ip = ? OR sa.ip_filter LIKE ?)"
+            params.extend([ip, f"%{ip}%"])
+
+        query += " ORDER BY sa.created_at DESC LIMIT 100"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Get total count of adjustments
+        cursor.execute("SELECT COUNT(*) FROM severity_adjustments")
+        total_count = cursor.fetchone()[0]
+
+        # Get count by severity change type
+        cursor.execute("""
+            SELECT original_severity, new_severity, COUNT(*) as count
+            FROM severity_adjustments
+            GROUP BY original_severity, new_severity
+            ORDER BY count DESC
+        """)
+        change_stats = [{"from": r[0], "to": r[1], "count": r[2]} for r in cursor.fetchall()]
+
+    return {
+        "total_adjustments": total_count,
+        "change_statistics": change_stats,
+        "adjustments": [{
+            "id": row[0],
+            "log_id": row[1],
+            "pattern_hash": row[2][:16] + "..." if row[2] else None,
+            "original_severity": row[3],
+            "new_severity": row[4],
+            "reason": row[5],
+            "host_filter": row[6],
+            "ip_filter": row[7],
+            "expires_at": row[8],
+            "exclude_hosts": row[9],
+            "is_active": bool(row[10]),
+            "times_applied": row[11],
+            "created_at": row[12],
+            "raw_log": row[13][:100] + "..." if row[13] and len(row[13]) > 100 else row[13],
+            "host": row[14],
+            "source_ip": row[15]
+        } for row in rows]
+    }
+
+@app.get("/api/conditional-rules")
+@limiter.limit("60/minute")
+async def get_conditional_rules(request: Request, active_only: bool = True):
+    """Get all conditional severity rules."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                id, pattern_hash, original_severity, corrected_severity, reason,
+                host_filter, ip_filter, expires_at, exclude_hosts,
+                is_active, times_applied, created_at, updated_at
+            FROM ai_knowledge_conditions
+        """
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY created_at DESC"
+
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        # Get total times rules have been applied
+        cursor.execute("SELECT SUM(times_applied) FROM ai_knowledge_conditions WHERE is_active = 1")
+        total_applied = cursor.fetchone()[0] or 0
+
+    return {
+        "total_rules": len(rows),
+        "total_times_applied": total_applied,
+        "rules": [{
+            "id": row[0],
+            "pattern_hash": row[1][:16] + "..." if row[1] else None,
+            "original_severity": row[2],
+            "corrected_severity": row[3],
+            "reason": row[4],
+            "host_filter": row[5],
+            "ip_filter": row[6],
+            "expires_at": row[7],
+            "exclude_hosts": row[8],
+            "is_active": bool(row[9]),
+            "times_applied": row[10],
+            "created_at": row[11],
+            "updated_at": row[12]
+        } for row in rows]
+    }
+
+@app.get("/api/processing-time-stats")
+@limiter.limit("60/minute")
+async def get_processing_time_stats(request: Request):
+    """Get processing time statistics comparing LLM vs Knowledge Base analysis."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Average processing time by analyzer type
+        cursor.execute("""
+            SELECT
+                analyzed_by,
+                COUNT(*) as count,
+                AVG(processing_time_ms) as avg_ms,
+                MIN(processing_time_ms) as min_ms,
+                MAX(processing_time_ms) as max_ms
+            FROM raw_logs
+            WHERE status = 'PROCESSED'
+            AND processing_time_ms IS NOT NULL
+            GROUP BY analyzed_by
+        """)
+        by_analyzer = [{
+            "analyzer": row[0] or "unknown",
+            "count": row[1],
+            "avg_ms": round(row[2], 2) if row[2] else 0,
+            "min_ms": row[3] or 0,
+            "max_ms": row[4] or 0
+        } for row in cursor.fetchall()]
+
+        # Recent processing times for chart
+        cursor.execute("""
+            SELECT id, analyzed_by, processing_time_ms, processed_at
+            FROM raw_logs
+            WHERE status = 'PROCESSED'
+            AND processing_time_ms IS NOT NULL
+            ORDER BY processed_at DESC
+            LIMIT 50
+        """)
+        recent = [{
+            "id": row[0],
+            "analyzer": row[1],
+            "processing_time_ms": row[2],
+            "processed_at": row[3]
+        } for row in cursor.fetchall()]
+
+        # Time savings calculation
+        llm_stats = next((s for s in by_analyzer if s["analyzer"] == "llm"), {"avg_ms": 0, "count": 0})
+        kb_stats = next((s for s in by_analyzer if s["analyzer"] == "knowledge_base"), {"avg_ms": 0, "count": 0})
+        conditional_stats = next((s for s in by_analyzer if s["analyzer"] == "conditional_rule"), {"avg_ms": 0, "count": 0})
+
+        time_saved_ms = 0
+        if llm_stats["avg_ms"] > 0:
+            kb_time_saved = (llm_stats["avg_ms"] - kb_stats["avg_ms"]) * kb_stats["count"]
+            cond_time_saved = (llm_stats["avg_ms"] - conditional_stats["avg_ms"]) * conditional_stats["count"]
+            time_saved_ms = kb_time_saved + cond_time_saved
+
+    return {
+        "by_analyzer": by_analyzer,
+        "recent_processing": recent,
+        "time_savings": {
+            "total_time_saved_ms": round(time_saved_ms, 0),
+            "total_time_saved_formatted": format_duration(int(time_saved_ms / 1000)),
+            "llm_avg_ms": llm_stats["avg_ms"],
+            "knowledge_base_avg_ms": kb_stats["avg_ms"],
+            "conditional_rule_avg_ms": conditional_stats["avg_ms"],
+            "speedup_factor": round(llm_stats["avg_ms"] / kb_stats["avg_ms"], 1) if kb_stats["avg_ms"] > 0 else 0
+        }
+    }
+
+@app.delete("/api/conditional-rules/{rule_id}")
+@limiter.limit("10/minute")
+async def deactivate_conditional_rule(request: Request, rule_id: int):
+    """Deactivate a conditional severity rule."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE ai_knowledge_conditions SET is_active = 0 WHERE id = ?", (rule_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        conn.commit()
+
+    return {"status": "success", "message": f"Rule {rule_id} deactivated"}
 
 @app.get("/api/logs-processed")
 @limiter.limit("100/minute")
