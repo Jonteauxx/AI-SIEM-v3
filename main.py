@@ -473,7 +473,44 @@ def extract_host_from_log(log_message: str) -> str:
     """Extract hostname or IP address from log message."""
     import re
 
-    # Try to find IP address
+    # Keywords that should NOT be considered hostnames
+    severity_keywords = {'LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'INFO', 'WARNING', 'ALERT',
+                         'ERROR', 'DEBUG', 'NOTICE', 'SECURITY', 'RANSOMWARE'}
+
+    # Try to find hostname in common patterns first (more reliable)
+    # Pattern: "on hostname" or "on hostname -" or "on hostname/"
+    on_host_pattern = r'\bon\s+([a-zA-Z0-9\-\.]+)(?:\s|$|/|-)'
+    on_host_match = re.search(on_host_pattern, log_message)
+    if on_host_match:
+        hostname = on_host_match.group(1)
+        if hostname.upper() not in severity_keywords:
+            return hostname
+
+    # Pattern: "from hostname" (for login/connection logs)
+    from_host_pattern = r'\bfrom\s+([a-zA-Z0-9\-\.]+)(?:\s|$)'
+    from_host_match = re.search(from_host_pattern, log_message)
+    if from_host_match:
+        hostname = from_host_match.group(1)
+        if hostname.upper() not in severity_keywords and not re.match(r'^\d+\.\d+\.\d+\.\d+$', hostname):
+            return hostname
+
+    # Pattern: "targeting hostname" or "target hostname"
+    target_pattern = r'\btarget(?:ing)?\s+([a-zA-Z0-9\-\.]+)(?:\s|$|/)'
+    target_match = re.search(target_pattern, log_message)
+    if target_match:
+        hostname = target_match.group(1)
+        if hostname.upper() not in severity_keywords:
+            return hostname
+
+    # Pattern: "for hostname" (e.g., "update available for hostname")
+    for_host_pattern = r'\bfor\s+([a-zA-Z0-9\-\.]+)(?:\s+-|\s|$)'
+    for_host_match = re.search(for_host_pattern, log_message)
+    if for_host_match:
+        hostname = for_host_match.group(1)
+        if hostname.upper() not in severity_keywords and len(hostname) > 2:
+            return hostname
+
+    # Try to find IP address as fallback
     ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
     ip_match = re.search(ip_pattern, log_message)
     if ip_match:
@@ -484,13 +521,17 @@ def extract_host_from_log(log_message: str) -> str:
     syslog_pattern = r'^\<\d+\>\w+\s+\d+\s+\d+:\d+:\d+\s+(\S+)'
     syslog_match = re.search(syslog_pattern, log_message)
     if syslog_match:
-        return syslog_match.group(1)
+        hostname = syslog_match.group(1)
+        if hostname.upper() not in severity_keywords:
+            return hostname
 
-    # Try hostname at beginning of log (before first colon)
+    # Try hostname at beginning of log (before first colon) - but exclude severity keywords
     hostname_pattern = r'^([a-zA-Z0-9\-\.]+):\s'
     hostname_match = re.search(hostname_pattern, log_message)
     if hostname_match:
-        return hostname_match.group(1)
+        hostname = hostname_match.group(1)
+        if hostname.upper() not in severity_keywords:
+            return hostname
 
     return "Unknown"
 
@@ -2003,7 +2044,7 @@ async def get_system_metrics(request: Request):
 @limiter.limit("60/minute")
 async def get_soc_metrics(request: Request):
     """Get SOC performance metrics: MTTD, MTTR, MTTA"""
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # MTTD: Mean Time to Detect (time between log timestamp and processed_at)
@@ -2081,7 +2122,7 @@ def format_duration(seconds):
 @limiter.limit("60/minute")
 async def get_mitre_matrix(request: Request):
     """Get MITRE ATT&CK matrix data from alert enrichment"""
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Get tactic counts
@@ -2143,7 +2184,7 @@ async def get_mitre_matrix(request: Request):
 @limiter.limit("60/minute")
 async def get_timeline(request: Request, hours: int = 24, host: str = None, severity: str = None):
     """Get chronological timeline of security events"""
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         query = """
@@ -2197,7 +2238,7 @@ async def get_timeline(request: Request, hours: int = 24, host: str = None, seve
 @limiter.limit("10/minute")
 async def get_threat_briefing(request: Request):
     """Generate AI-powered threat briefing summary"""
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Gather statistics for the briefing
@@ -2291,7 +2332,7 @@ Provide a brief executive summary (3-4 sentences), key findings, and recommended
 @limiter.limit("120/minute")
 async def get_notifications(request: Request, unread_only: bool = True):
     """Get recent notifications/alerts for the dashboard"""
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Get recent critical/high severity events as notifications
@@ -2355,7 +2396,7 @@ async def update_incident_status(request: Request, incident_id: int, status: str
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
 
-    with get_db_connection() as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Update status and timestamps
