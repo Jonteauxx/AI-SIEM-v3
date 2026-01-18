@@ -1306,67 +1306,47 @@
 
         <!-- Log Search & Filter -->
         <div class="data-table">
-            <div class="table-header">
-                <div class="table-title">🔍 Security Event Search</div>
-                <div>
-                    <button class="btn" onclick="searchLogs()">🔄 Refresh</button>
-                    <button class="btn btn-secondary" onclick="exportLogs()">📥 Export</button>
+            <div class="table-header" style="padding: 10px 15px;">
+                <div class="table-title" style="font-size: 1em;">🔍 Security Event Search</div>
+                <div style="display: flex; gap: 6px;">
+                    <button class="btn" onclick="searchLogs()" style="padding: 5px 10px; font-size: 0.85em;">🔄 Refresh</button>
+                    <button class="btn btn-secondary" onclick="exportLogs()" style="padding: 5px 10px; font-size: 0.85em;">📥 Export</button>
                 </div>
             </div>
 
-            <!-- Search Filters -->
-            <div style="padding: 15px; background: var(--primary-bg); border-radius: 8px; margin: 10px 0;">
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Search Text</label>
-                        <input type="text" id="search-query" placeholder="Search in logs..."
-                               onkeypress="if(event.key==='Enter')searchLogs()"
-                               style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                    </div>
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Severity</label>
-                        <select id="search-severity" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                            <option value="">All Severities</option>
-                            <option value="Critical">Critical</option>
-                            <option value="High">High</option>
-                            <option value="Medium">Medium</option>
-                            <option value="Low">Low</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Host</label>
-                        <input type="text" id="search-host" placeholder="Filter by host..."
-                               style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                    </div>
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Event Type</label>
-                        <select id="search-event-type" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                            <option value="">All Event Types</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Analyzed By</label>
-                        <select id="search-analyzer" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                            <option value="">All Analyzers</option>
-                            <option value="llm">LLM</option>
-                            <option value="knowledge_base">Knowledge Base</option>
-                            <option value="conditional_rule">Conditional Rule</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style="font-size: 0.8em; opacity: 0.8; display: block; margin-bottom: 4px;">Status</label>
-                        <select id="search-status" style="width: 100%; padding: 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                            <option value="">All Status</option>
-                            <option value="PROCESSED">Processed</option>
-                            <option value="PENDING">Pending</option>
-                            <option value="ERROR">Error</option>
-                        </select>
-                    </div>
-                </div>
-                <div style="display: flex; gap: 10px; margin-top: 12px; align-items: center;">
-                    <button class="btn" onclick="searchLogs()">🔍 Search</button>
-                    <button class="btn btn-secondary" onclick="clearSearchFilters()">Clear Filters</button>
-                    <span id="search-results-count" style="margin-left: auto; font-size: 0.9em; opacity: 0.8;"></span>
+            <!-- Search Filters (Compact) -->
+            <div style="padding: 10px; background: var(--primary-bg); border-radius: 6px; margin: 8px 0;">
+                <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                    <input type="text" id="search-query" placeholder="🔍 Search..."
+                           onkeypress="if(event.key==='Enter')searchLogs()"
+                           style="flex: 1; min-width: 150px; padding: 6px 10px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                    <select id="search-severity" style="padding: 6px 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                        <option value="">All Severities</option>
+                        <option value="Critical">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                    </select>
+                    <input type="text" id="search-host" placeholder="Host..."
+                           style="width: 100px; padding: 6px 10px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                    <select id="search-event-type" style="padding: 6px 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                        <option value="">All Types</option>
+                    </select>
+                    <select id="search-analyzer" style="padding: 6px 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                        <option value="">All Analyzers</option>
+                        <option value="llm">LLM</option>
+                        <option value="knowledge_base">Knowledge Base</option>
+                        <option value="conditional_rule">Conditional Rule</option>
+                    </select>
+                    <select id="search-status" style="padding: 6px 8px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85em;">
+                        <option value="">All Status</option>
+                        <option value="PROCESSED">Processed</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="ERROR">Error</option>
+                    </select>
+                    <button class="btn" onclick="searchLogs()" style="padding: 6px 12px; font-size: 0.85em;">Search</button>
+                    <button class="btn btn-secondary" onclick="clearSearchFilters()" style="padding: 6px 10px; font-size: 0.85em;">Clear</button>
+                    <span id="search-results-count" style="margin-left: auto; font-size: 0.8em; opacity: 0.8;"></span>
                 </div>
             </div>
 
@@ -1379,10 +1359,10 @@
             </div>
 
             <!-- Pagination -->
-            <div id="pagination-container" style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 15px; border-top: 1px solid var(--border-color);">
-                <button class="btn btn-secondary" id="prev-page" onclick="changePage(-1)" disabled>← Previous</button>
-                <span id="page-info" style="font-size: 0.9em;">Page 1</span>
-                <button class="btn btn-secondary" id="next-page" onclick="changePage(1)">Next →</button>
+            <div id="pagination-container" style="display: flex; justify-content: center; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid var(--border-color);">
+                <button class="btn btn-secondary" id="prev-page" onclick="changePage(-1)" disabled style="padding: 4px 10px; font-size: 0.85em;">← Prev</button>
+                <span id="page-info" style="font-size: 0.85em;">Page 1</span>
+                <button class="btn btn-secondary" id="next-page" onclick="changePage(1)" style="padding: 4px 10px; font-size: 0.85em;">Next →</button>
             </div>
         </div>
     </div>
