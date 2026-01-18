@@ -715,17 +715,95 @@
             transform: scale(1.05);
         }
 
-        /* CPU Indicator */
-        .cpu-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--primary-bg);
-            padding: 8px 15px;
-            border-radius: 8px;
-            border: 2px solid var(--border-color);
-            font-size: 0.85em;
+        /* System Monitor */
+        .system-monitor {
+            position: relative;
         }
+
+        .system-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background: var(--secondary-bg);
+            border: 1px solid var(--active-color);
+            border-radius: 6px;
+            min-width: 280px;
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .system-dropdown.active {
+            display: block;
+        }
+
+        .system-section {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .system-section:last-child {
+            border-bottom: none;
+        }
+
+        .system-section-title {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            opacity: 0.6;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        .system-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8em;
+            margin-bottom: 4px;
+        }
+
+        .system-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .system-label {
+            opacity: 0.8;
+        }
+
+        .system-value {
+            font-weight: bold;
+            color: var(--active-color);
+        }
+
+        .system-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 3px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+
+        .system-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s, background 0.3s;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 4px;
+        }
+
+        .status-dot.green { background: var(--low-severity); }
+        .status-dot.yellow { background: var(--medium-severity); }
+        .status-dot.red { background: var(--high-severity); }
 
         .cpu-bar {
             width: 60px;
@@ -1249,13 +1327,90 @@
         <div class="logo">🛡️ AXS ICT SOC Agent</div>
         <div class="title">AI-Powered Security Operations Center</div>
         <div class="header-controls">
-            <!-- CPU Indicator -->
-            <div class="cpu-indicator" id="cpu-indicator" title="System Load">
-                <span class="cpu-icon">💻</span>
-                <div class="cpu-bar">
-                    <div class="cpu-bar-fill" id="cpu-bar-fill" style="width: 0%; background: var(--low-severity);"></div>
+            <!-- System Monitor -->
+            <div class="system-monitor" id="system-monitor">
+                <button class="header-btn" onclick="toggleSystemMonitor()" id="system-btn" title="System Monitor">
+                    <span id="system-status-dot" class="status-dot green"></span>
+                    💻 <span id="cpu-quick">0%</span>
+                </button>
+                <div class="system-dropdown" id="system-dropdown">
+                    <div class="system-section">
+                        <div class="system-section-title">🖥️ CPU</div>
+                        <div class="system-row">
+                            <span class="system-label">Usage</span>
+                            <span class="system-value" id="sys-cpu-percent">0%</span>
+                        </div>
+                        <div class="system-bar">
+                            <div class="system-bar-fill" id="sys-cpu-bar" style="width: 0%; background: var(--low-severity);"></div>
+                        </div>
+                        <div class="system-row" style="margin-top: 4px;">
+                            <span class="system-label">Cores</span>
+                            <span class="system-value" id="sys-cpu-cores">-</span>
+                        </div>
+                        <div class="system-row">
+                            <span class="system-label">Frequency</span>
+                            <span class="system-value" id="sys-cpu-freq">-</span>
+                        </div>
+                    </div>
+                    <div class="system-section">
+                        <div class="system-section-title">🧠 Memory</div>
+                        <div class="system-row">
+                            <span class="system-label">RAM Usage</span>
+                            <span class="system-value" id="sys-mem-percent">0%</span>
+                        </div>
+                        <div class="system-bar">
+                            <div class="system-bar-fill" id="sys-mem-bar" style="width: 0%; background: var(--low-severity);"></div>
+                        </div>
+                        <div class="system-row" style="margin-top: 4px;">
+                            <span class="system-label">Used / Total</span>
+                            <span class="system-value" id="sys-mem-used">- / -</span>
+                        </div>
+                        <div class="system-row">
+                            <span class="system-label">Available</span>
+                            <span class="system-value" id="sys-mem-available">-</span>
+                        </div>
+                    </div>
+                    <div class="system-section">
+                        <div class="system-section-title">💾 Disk</div>
+                        <div class="system-row">
+                            <span class="system-label">Usage</span>
+                            <span class="system-value" id="sys-disk-percent">0%</span>
+                        </div>
+                        <div class="system-bar">
+                            <div class="system-bar-fill" id="sys-disk-bar" style="width: 0%; background: var(--low-severity);"></div>
+                        </div>
+                        <div class="system-row" style="margin-top: 4px;">
+                            <span class="system-label">Used / Total</span>
+                            <span class="system-value" id="sys-disk-used">- / -</span>
+                        </div>
+                        <div class="system-row">
+                            <span class="system-label">Free</span>
+                            <span class="system-value" id="sys-disk-free">-</span>
+                        </div>
+                    </div>
+                    <div class="system-section">
+                        <div class="system-section-title">🌐 Network</div>
+                        <div class="system-row">
+                            <span class="system-label">Sent</span>
+                            <span class="system-value" id="sys-net-sent">-</span>
+                        </div>
+                        <div class="system-row">
+                            <span class="system-label">Received</span>
+                            <span class="system-value" id="sys-net-recv">-</span>
+                        </div>
+                    </div>
+                    <div class="system-section">
+                        <div class="system-section-title">⏱️ System</div>
+                        <div class="system-row">
+                            <span class="system-label">Uptime</span>
+                            <span class="system-value" id="sys-uptime">-</span>
+                        </div>
+                        <div class="system-row">
+                            <span class="system-label">AI Processor</span>
+                            <span class="system-value" id="sys-processor">-</span>
+                        </div>
+                    </div>
                 </div>
-                <span id="cpu-percent">0%</span>
             </div>
             <!-- Notification Bell -->
             <div class="notification-bell" id="notification-bell">
@@ -1947,36 +2102,69 @@
         }
 
         // System Metrics (CPU/Memory)
+        function toggleSystemMonitor() {
+            const dropdown = document.getElementById('system-dropdown');
+            dropdown.classList.toggle('active');
+        }
+
+        function getBarColor(percent) {
+            if (percent > 80) return 'var(--high-severity)';
+            if (percent > 50) return 'var(--medium-severity)';
+            return 'var(--low-severity)';
+        }
+
+        function getStatusColor(percent) {
+            if (percent > 80) return 'red';
+            if (percent > 50) return 'yellow';
+            return 'green';
+        }
+
         async function loadSystemMetrics() {
             try {
                 const response = await fetch(`${API_BASE}/system-metrics`);
                 const data = await response.json();
 
                 const cpuPercent = Math.round(data.cpu_percent);
-                const cpuBar = document.getElementById('cpu-bar-fill');
-                const cpuText = document.getElementById('cpu-percent');
-                const cpuIndicator = document.getElementById('cpu-indicator');
+                const memPercent = Math.round(data.memory_percent);
+                const diskPercent = Math.round(data.disk_percent);
 
-                cpuText.textContent = `${cpuPercent}%`;
+                // Quick view in header button
+                document.getElementById('cpu-quick').textContent = `${cpuPercent}%`;
+                const statusDot = document.getElementById('system-status-dot');
+                statusDot.className = `status-dot ${getStatusColor(Math.max(cpuPercent, memPercent))}`;
+
+                // CPU Section
+                document.getElementById('sys-cpu-percent').textContent = `${cpuPercent}%`;
+                const cpuBar = document.getElementById('sys-cpu-bar');
                 cpuBar.style.width = `${cpuPercent}%`;
+                cpuBar.style.background = getBarColor(cpuPercent);
+                document.getElementById('sys-cpu-cores').textContent = data.cpu_count || '-';
+                document.getElementById('sys-cpu-freq').textContent = data.cpu_freq_mhz ? `${data.cpu_freq_mhz} MHz` : '-';
 
-                // Color based on load
-                if (cpuPercent > 80) {
-                    cpuBar.style.background = 'var(--high-severity)';
-                } else if (cpuPercent > 50) {
-                    cpuBar.style.background = 'var(--medium-severity)';
-                } else {
-                    cpuBar.style.background = 'var(--low-severity)';
-                }
+                // Memory Section
+                document.getElementById('sys-mem-percent').textContent = `${memPercent}%`;
+                const memBar = document.getElementById('sys-mem-bar');
+                memBar.style.width = `${memPercent}%`;
+                memBar.style.background = getBarColor(memPercent);
+                document.getElementById('sys-mem-used').textContent = `${data.memory_used_gb} / ${data.memory_total_gb} GB`;
+                document.getElementById('sys-mem-available').textContent = `${data.memory_available_gb} GB`;
 
-                // Processing animation
-                if (data.processor_active) {
-                    cpuIndicator.classList.add('processing');
-                    cpuIndicator.title = `CPU: ${cpuPercent}% | AI Processing Active`;
-                } else {
-                    cpuIndicator.classList.remove('processing');
-                    cpuIndicator.title = `CPU: ${cpuPercent}% | Memory: ${Math.round(data.memory_percent)}%`;
-                }
+                // Disk Section
+                document.getElementById('sys-disk-percent').textContent = `${diskPercent}%`;
+                const diskBar = document.getElementById('sys-disk-bar');
+                diskBar.style.width = `${diskPercent}%`;
+                diskBar.style.background = getBarColor(diskPercent);
+                document.getElementById('sys-disk-used').textContent = `${data.disk_used_gb} / ${data.disk_total_gb} GB`;
+                document.getElementById('sys-disk-free').textContent = `${data.disk_free_gb} GB`;
+
+                // Network Section
+                document.getElementById('sys-net-sent').textContent = `${data.net_bytes_sent_mb} MB`;
+                document.getElementById('sys-net-recv').textContent = `${data.net_bytes_recv_mb} MB`;
+
+                // System Section
+                document.getElementById('sys-uptime').textContent = data.uptime || '-';
+                document.getElementById('sys-processor').textContent = data.processor_active ? '🟢 Active' : '⚪ Idle';
+
             } catch (error) {
                 console.error('Failed to load system metrics:', error);
             }
@@ -2373,6 +2561,10 @@
             const bellContainer = document.getElementById('notification-bell');
             if (!bellContainer.contains(e.target)) {
                 document.getElementById('notification-dropdown').classList.remove('active');
+            }
+            const sysContainer = document.getElementById('system-monitor');
+            if (!sysContainer.contains(e.target)) {
+                document.getElementById('system-dropdown').classList.remove('active');
             }
         });
 

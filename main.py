@@ -2633,19 +2633,47 @@ async def get_playbooks(request: Request):
 @app.get("/api/system-metrics")
 @limiter.limit("120/minute")
 async def get_system_metrics(request: Request):
-    """Get system CPU, memory, and processor status"""
+    """Get system CPU, memory, disk, and network status"""
     global PROCESSOR_ACTIVE
 
     cpu_percent = psutil.cpu_percent(interval=0.1)
+    cpu_count = psutil.cpu_count()
+    cpu_freq = psutil.cpu_freq()
+
     memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
     disk = psutil.disk_usage('/')
+
+    # Network I/O
+    net_io = psutil.net_io_counters()
+
+    # System uptime
+    boot_time = psutil.boot_time()
+    uptime_seconds = time.time() - boot_time
+    uptime_days = int(uptime_seconds // 86400)
+    uptime_hours = int((uptime_seconds % 86400) // 3600)
+    uptime_mins = int((uptime_seconds % 3600) // 60)
 
     return {
         "cpu_percent": cpu_percent,
+        "cpu_count": cpu_count,
+        "cpu_freq_mhz": round(cpu_freq.current, 0) if cpu_freq else 0,
         "memory_percent": memory.percent,
         "memory_used_gb": round(memory.used / (1024**3), 2),
         "memory_total_gb": round(memory.total / (1024**3), 2),
+        "memory_available_gb": round(memory.available / (1024**3), 2),
+        "swap_percent": swap.percent,
+        "swap_used_gb": round(swap.used / (1024**3), 2),
+        "swap_total_gb": round(swap.total / (1024**3), 2),
         "disk_percent": disk.percent,
+        "disk_used_gb": round(disk.used / (1024**3), 2),
+        "disk_total_gb": round(disk.total / (1024**3), 2),
+        "disk_free_gb": round(disk.free / (1024**3), 2),
+        "net_bytes_sent_mb": round(net_io.bytes_sent / (1024**2), 2),
+        "net_bytes_recv_mb": round(net_io.bytes_recv / (1024**2), 2),
+        "net_packets_sent": net_io.packets_sent,
+        "net_packets_recv": net_io.packets_recv,
+        "uptime": f"{uptime_days}d {uptime_hours}h {uptime_mins}m",
         "processor_active": PROCESSOR_ACTIVE,
         "timestamp": datetime.datetime.now().isoformat()
     }
