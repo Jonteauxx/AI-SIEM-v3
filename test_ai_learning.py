@@ -167,7 +167,7 @@ def clear_knowledge_base(api_url):
 
 def main():
     parser = argparse.ArgumentParser(description="Test AI Learning Features")
-    parser.add_argument("--api-url", default="http://localhost:5001", help="API base URL")
+    parser.add_argument("--api-url", default="http://localhost:8000", help="API base URL")
     parser.add_argument("--skip-learning-demo", action="store_true", help="Skip the learning demonstration")
     args = parser.parse_args()
 
