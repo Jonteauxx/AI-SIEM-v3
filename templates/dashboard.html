@@ -153,6 +153,59 @@
             opacity: 0.7;
         }
 
+        /* Info Tooltip */
+        .info-tooltip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: help;
+        }
+
+        .info-icon {
+            width: 14px;
+            height: 14px;
+            background: var(--border-color);
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            margin-left: 5px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        .info-icon:hover {
+            opacity: 1;
+        }
+
+        .info-tooltip .tooltip-text {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--primary-bg);
+            color: var(--text-color);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            white-space: nowrap;
+            z-index: 1000;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: opacity 0.2s, visibility 0.2s;
+            max-width: 250px;
+            white-space: normal;
+            text-align: center;
+        }
+
+        .info-tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
         /* Charts */
         .charts-grid {
             display: grid;
@@ -1459,36 +1512,93 @@
         <h2 style="margin-bottom: 20px; color: var(--active-color);">⚖️ Severity Adjustments & Processing Performance</h2>
 
         <!-- Stats Cards -->
-        <div class="metrics" style="margin-bottom: 20px;">
+        <div class="metrics" style="margin-bottom: 15px;">
             <div class="metric-card">
-                <div class="metric-label">Total Adjustments</div>
+                <div class="metric-label info-tooltip">
+                    Total Adjustments
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">Number of times a user has manually changed the severity of a log (e.g., High → Low)</span>
+                </div>
                 <div class="metric-value" id="total-adjustments">-</div>
                 <div class="metric-trend">All time</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Active Rules</div>
+                <div class="metric-label info-tooltip">
+                    Active Rules
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">Conditional rules currently active that automatically adjust severity for matching logs</span>
+                </div>
                 <div class="metric-value" id="active-rules">-</div>
                 <div class="metric-trend">Conditional</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Times Applied</div>
+                <div class="metric-label info-tooltip">
+                    Times Applied
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">How many logs have been automatically adjusted by learned rules (without needing AI analysis)</span>
+                </div>
                 <div class="metric-value" id="rules-applied">-</div>
                 <div class="metric-trend">Auto-adjusted</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">LLM Avg Time</div>
+                <div class="metric-label info-tooltip">
+                    LLM Avg Time
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">Average time for AI/LLM to analyze a NEW log type. This is slower because the AI must fully analyze the log.</span>
+                </div>
                 <div class="metric-value" id="llm-avg-time">-</div>
-                <div class="metric-trend">Full analysis</div>
+                <div class="metric-trend">First-time analysis</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">KB Avg Time</div>
+                <div class="metric-label info-tooltip">
+                    KB Avg Time
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">Average time for Knowledge Base lookup. Much faster because similar logs are recognized and classified instantly.</span>
+                </div>
                 <div class="metric-value" id="kb-avg-time">-</div>
-                <div class="metric-trend">Knowledge base</div>
+                <div class="metric-trend">Learned logs</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Speedup Factor</div>
+                <div class="metric-label info-tooltip">
+                    Speedup Factor
+                    <span class="info-icon">i</span>
+                    <span class="tooltip-text">How much faster KB is compared to LLM. E.g., "12x" means KB processes logs 12 times faster than full AI analysis.</span>
+                </div>
                 <div class="metric-value" id="speedup-factor">-</div>
                 <div class="metric-trend">KB vs LLM</div>
+            </div>
+        </div>
+
+        <!-- Learning Demonstration Panel -->
+        <div class="data-table" style="margin-bottom: 15px; padding: 12px;">
+            <div class="table-header" style="margin-bottom: 10px;">
+                <div class="table-title">📊 AI Learning Demonstration</div>
+                <span class="info-tooltip" style="cursor: help;">
+                    <span class="info-icon" style="margin-left: 8px;">i</span>
+                    <span class="tooltip-text">This shows how the system learns: first batch uses slow LLM analysis, subsequent similar logs use fast KB lookup.</span>
+                </span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="background: var(--primary-bg); padding: 12px; border-radius: 8px; border-left: 4px solid var(--high-severity);">
+                    <div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 5px;">🐢 First Batch (LLM)</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: var(--high-severity);" id="first-batch-time">-</div>
+                    <div style="font-size: 0.75em; opacity: 0.6;">New logs require full AI analysis</div>
+                </div>
+                <div style="background: var(--primary-bg); padding: 12px; border-radius: 8px; border-left: 4px solid var(--active-color);">
+                    <div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 5px;">🚀 Second Batch (KB)</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: var(--active-color);" id="second-batch-time">-</div>
+                    <div style="font-size: 0.75em; opacity: 0.6;">Similar logs recognized instantly</div>
+                </div>
+                <div style="background: var(--primary-bg); padding: 12px; border-radius: 8px; border-left: 4px solid var(--medium-severity);">
+                    <div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 5px;">⚡ Time Saved</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: var(--medium-severity);" id="time-saved">-</div>
+                    <div style="font-size: 0.75em; opacity: 0.6;">Per batch of similar logs</div>
+                </div>
+                <div style="background: var(--primary-bg); padding: 12px; border-radius: 8px; border-left: 4px solid var(--low-severity);">
+                    <div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 5px;">📈 Logs in KB</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: var(--low-severity);" id="kb-entries-count">-</div>
+                    <div style="font-size: 0.75em; opacity: 0.6;">Patterns learned by system</div>
+                </div>
             </div>
         </div>
 
@@ -2421,6 +2531,12 @@
                 document.getElementById('llm-avg-time').textContent = savings.llm_avg_ms ? `${Math.round(savings.llm_avg_ms)}ms` : '-';
                 document.getElementById('kb-avg-time').textContent = savings.knowledge_base_avg_ms ? `${Math.round(savings.knowledge_base_avg_ms)}ms` : '-';
                 document.getElementById('speedup-factor').textContent = savings.speedup_factor ? `${savings.speedup_factor}x` : '-';
+
+                // Update Learning Demonstration Panel
+                document.getElementById('first-batch-time').textContent = savings.llm_avg_ms ? `~${Math.round(savings.llm_avg_ms)}ms` : '-';
+                document.getElementById('second-batch-time').textContent = savings.knowledge_base_avg_ms ? `~${Math.round(savings.knowledge_base_avg_ms)}ms` : '-';
+                document.getElementById('time-saved').textContent = savings.total_time_saved_formatted || '-';
+                document.getElementById('kb-entries-count').textContent = savings.kb_entries_count || 0;
 
                 // Processing Time by Analyzer Chart
                 const byAnalyzer = data.by_analyzer || [];

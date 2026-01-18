@@ -1963,6 +1963,14 @@ async def get_processing_time_stats(request: Request):
             cond_time_saved = (llm_stats["avg_ms"] - conditional_stats["avg_ms"]) * conditional_stats["count"]
             time_saved_ms = kb_time_saved + cond_time_saved
 
+        # Count knowledge base entries
+        cursor.execute("SELECT COUNT(*) FROM ai_knowledge")
+        kb_entries_count = cursor.fetchone()[0]
+
+        # Count conditional rules
+        cursor.execute("SELECT COUNT(*) FROM ai_knowledge_conditions WHERE is_active = 1")
+        active_rules_count = cursor.fetchone()[0]
+
     return {
         "by_analyzer": by_analyzer,
         "recent_processing": recent,
@@ -1970,9 +1978,14 @@ async def get_processing_time_stats(request: Request):
             "total_time_saved_ms": round(time_saved_ms, 0),
             "total_time_saved_formatted": format_duration(int(time_saved_ms / 1000)),
             "llm_avg_ms": llm_stats["avg_ms"],
+            "llm_count": llm_stats["count"],
             "knowledge_base_avg_ms": kb_stats["avg_ms"],
+            "knowledge_base_count": kb_stats["count"],
             "conditional_rule_avg_ms": conditional_stats["avg_ms"],
-            "speedup_factor": round(llm_stats["avg_ms"] / kb_stats["avg_ms"], 1) if kb_stats["avg_ms"] > 0 else 0
+            "conditional_rule_count": conditional_stats["count"],
+            "speedup_factor": round(llm_stats["avg_ms"] / kb_stats["avg_ms"], 1) if kb_stats["avg_ms"] > 0 else 0,
+            "kb_entries_count": kb_entries_count,
+            "active_rules_count": active_rules_count
         }
     }
 
