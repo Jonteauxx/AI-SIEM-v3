@@ -2932,16 +2932,21 @@
                                                style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
                                     </div>
                                     <div>
-                                        <label style="font-size: 0.85em; opacity: 0.8;">Expires in (days):</label>
-                                        <input type="number" id="cond-expires-days" placeholder="e.g., 20 (for SSL expires)"
+                                        <label style="font-size: 0.85em; opacity: 0.8;">Rule expires in (days):</label>
+                                        <input type="number" id="cond-expires-days" placeholder="e.g., 30 (leave empty for permanent)"
                                                min="1" max="365"
                                                style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
                                     </div>
                                 </div>
                                 <div style="margin-top: 12px;">
                                     <label style="font-size: 0.85em; opacity: 0.8;">Reason for adjustment:</label>
-                                    <textarea id="cond-reason" placeholder="e.g., SSL cert renewal is scheduled, low priority for now"
+                                    <textarea id="cond-reason" placeholder="e.g., Known maintenance window, expected behavior, false positive for this environment"
                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); min-height: 60px; resize: vertical;"></textarea>
+                                </div>
+                                <div style="margin-top: 15px; text-align: right;">
+                                    <button class="btn" id="apply-conditions-btn" onclick="applyConditionalSeverity()" style="display: none;">
+                                        Apply Conditional Rule
+                                    </button>
                                 </div>
                             </div>
 
@@ -3555,7 +3560,18 @@
         function toggleConditions() {
             const condOptions = document.getElementById('condition-options');
             const showCond = document.getElementById('show-conditions');
+            const applyBtn = document.getElementById('apply-conditions-btn');
             condOptions.style.display = showCond.checked ? 'block' : 'none';
+
+            // Show/hide the apply button based on checkbox and if a severity is selected
+            if (showCond.checked && selectedSeverity) {
+                applyBtn.style.display = 'inline-block';
+                const learnMsg = document.getElementById('learn-message');
+                learnMsg.innerHTML = `Selected: <strong>${selectedSeverity}</strong>. Configure conditions below, then click Apply.`;
+                learnMsg.classList.add('show');
+            } else if (!showCond.checked && selectedSeverity) {
+                applyBtn.style.display = 'none';
+            }
         }
 
         function selectSeverity(logId, newSeverity, host) {
@@ -3567,14 +3583,17 @@
             event.target.classList.add('active');
 
             const showConditions = document.getElementById('show-conditions')?.checked;
+            const applyBtn = document.getElementById('apply-conditions-btn');
+
             if (showConditions) {
                 // Don't auto-apply if conditions are shown - user needs to configure
                 const learnMsg = document.getElementById('learn-message');
-                learnMsg.innerHTML = `Selected: <strong>${newSeverity}</strong>. Configure conditions below, then click Apply.
-                    <br><button class="btn" style="margin-top: 10px;" onclick="applyConditionalSeverity()">Apply Conditional Rule</button>`;
+                learnMsg.innerHTML = `Selected: <strong>${newSeverity}</strong>. Configure conditions below, then click Apply.`;
                 learnMsg.classList.add('show');
+                if (applyBtn) applyBtn.style.display = 'inline-block';
             } else {
                 // Apply immediately without conditions
+                if (applyBtn) applyBtn.style.display = 'none';
                 changeSeverity(logId, newSeverity);
             }
         }
