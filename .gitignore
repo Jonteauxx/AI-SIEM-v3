@@ -105,6 +105,10 @@ tmpclaude-*
 
 # Docker
 docker-compose.override.yml
+nginx/certs/*.pem
+nginx/certs/*.key
+nginx/certs/*.crt
+fluentd/log/
 
 # Secrets
 secrets/

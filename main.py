@@ -14,18 +14,26 @@ import signal
 import sys
 import logging
 import psutil
+import secrets
+import bleach
+import httpx
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from ollama import Client
 from elasticsearch import Elasticsearch
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from starlette.responses import Response
 
 # ==============================================================================
 # 1. Logging Configuration
@@ -54,6 +62,78 @@ LISTEN_PORT = int(os.getenv("LISTEN_PORT", "5046"))
 HOST_IP = os.getenv("HOST_IP", '0.0.0.0')
 API_PORT = int(os.getenv("API_PORT", "8000"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+
+# Processing Configuration (moved from hardcoded values)
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
+SLEEP_WHEN_EMPTY = int(os.getenv("SLEEP_WHEN_EMPTY", "3"))
+
+# ==============================================================================
+# 2b. Security Configuration
+# ==============================================================================
+# JWT Settings
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+
+# API Key for service-to-service communication
+API_KEY = os.getenv("API_KEY", "")
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# Authentication toggle (can disable for development)
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+
+# Default admin credentials (CHANGE IN PRODUCTION!)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")  # Pre-hashed password
+
+# CORS Configuration
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+CORS_ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer(auto_error=False)
+
+# ==============================================================================
+# 2c. Data Retention Configuration
+# ==============================================================================
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "90"))
+RETENTION_ENABLED = os.getenv("RETENTION_ENABLED", "true").lower() == "true"
+RETENTION_CHECK_INTERVAL = int(os.getenv("RETENTION_CHECK_HOURS", "24")) * 3600
+
+# ==============================================================================
+# 2d. Alerting Configuration
+# ==============================================================================
+ALERTING_ENABLED = os.getenv("ALERTING_ENABLED", "false").lower() == "true"
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
+ALERT_EMAIL_ENABLED = os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true"
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",")
+ALERT_SEVERITY_THRESHOLD = os.getenv("ALERT_SEVERITY_THRESHOLD", "High")  # High or Critical
+
+# ==============================================================================
+# 2e. Prometheus Metrics
+# ==============================================================================
+# Counters
+LOGS_INGESTED = Counter('siem_logs_ingested_total', 'Total number of logs ingested')
+LOGS_PROCESSED = Counter('siem_logs_processed_total', 'Total number of logs processed', ['severity', 'analyzer'])
+LOGS_ERRORS = Counter('siem_logs_errors_total', 'Total number of processing errors')
+API_REQUESTS = Counter('siem_api_requests_total', 'Total API requests', ['endpoint', 'method', 'status'])
+ALERTS_SENT = Counter('siem_alerts_sent_total', 'Total alerts sent', ['channel', 'severity'])
+
+# Histograms
+PROCESSING_TIME = Histogram('siem_log_processing_seconds', 'Time spent processing logs', ['analyzer'])
+API_LATENCY = Histogram('siem_api_latency_seconds', 'API request latency', ['endpoint'])
+
+# Gauges
+PENDING_LOGS_GAUGE = Gauge('siem_pending_logs', 'Number of pending logs')
+PROCESSED_LOGS_GAUGE = Gauge('siem_processed_logs', 'Number of processed logs')
+TOTAL_LOGS_GAUGE = Gauge('siem_total_logs', 'Total number of logs')
+PROCESSOR_ACTIVE_GAUGE = Gauge('siem_processor_active', 'Whether log processor is active')
+KNOWLEDGE_BASE_SIZE = Gauge('siem_knowledge_base_entries', 'Number of entries in AI knowledge base')
 
 INGESTOR_RUNNING = threading.Event()
 INGESTOR_RUNNING.set()
@@ -84,11 +164,123 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if CORS_ALLOW_ALL else CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==============================================================================
+# 3b. Authentication Functions
+# ==============================================================================
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against a hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """Generate password hash."""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
+    """Create a JWT access token."""
+    to_encode = data.copy()
+    expire = datetime.datetime.utcnow() + (expires_delta or datetime.timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    """Verify JWT token from Authorization header."""
+    if not AUTH_ENABLED:
+        return {"sub": "anonymous", "role": "admin"}
+
+    if credentials is None:
+        return None
+
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+async def verify_api_key(api_key: str = Depends(API_KEY_HEADER)) -> Optional[str]:
+    """Verify API key from header."""
+    if not AUTH_ENABLED:
+        return "anonymous"
+
+    if api_key and API_KEY and api_key == API_KEY:
+        return "api_key_user"
+    return None
+
+async def get_current_user(
+    token_payload: Optional[dict] = Depends(verify_token),
+    api_key_user: Optional[str] = Depends(verify_api_key)
+) -> dict:
+    """Get current user from either JWT or API key."""
+    if not AUTH_ENABLED:
+        return {"username": "anonymous", "role": "admin"}
+
+    if token_payload:
+        return {"username": token_payload.get("sub"), "role": token_payload.get("role", "user")}
+
+    if api_key_user:
+        return {"username": api_key_user, "role": "service"}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+async def get_optional_user(
+    token_payload: Optional[dict] = Depends(verify_token),
+    api_key_user: Optional[str] = Depends(verify_api_key)
+) -> Optional[dict]:
+    """Get current user if authenticated, None otherwise."""
+    if not AUTH_ENABLED:
+        return {"username": "anonymous", "role": "admin"}
+
+    if token_payload:
+        return {"username": token_payload.get("sub"), "role": token_payload.get("role", "user")}
+
+    if api_key_user:
+        return {"username": api_key_user, "role": "service"}
+
+    return None
+
+# ==============================================================================
+# 3c. Input Sanitization Functions
+# ==============================================================================
+def sanitize_log_content(log_content: str) -> str:
+    """Sanitize log content to prevent injection attacks."""
+    if not log_content:
+        return ""
+
+    # Remove potentially dangerous HTML/script content
+    cleaned = bleach.clean(log_content, tags=[], strip=True)
+
+    # Limit length to prevent DoS
+    max_length = 10000
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length] + "...[truncated]"
+
+    return cleaned
+
+def sanitize_search_query(query: str) -> str:
+    """Sanitize search query to prevent SQL injection."""
+    if not query:
+        return ""
+
+    # Remove SQL injection patterns
+    dangerous_patterns = [
+        r"--", r";", r"'", r'"', r"/*", r"*/", r"xp_", r"sp_",
+        r"UNION", r"SELECT", r"INSERT", r"UPDATE", r"DELETE", r"DROP"
+    ]
+
+    cleaned = query
+    for pattern in dangerous_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+
+    return cleaned[:500]  # Limit length
 
 # ==============================================================================
 # 4. Configuration Validation
@@ -385,6 +577,168 @@ def check_db_health() -> bool:
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
         return False
+
+# ==============================================================================
+# 5b. Data Retention Management
+# ==============================================================================
+def cleanup_old_logs() -> Dict[str, int]:
+    """Delete logs older than RETENTION_DAYS."""
+    if not RETENTION_ENABLED:
+        return {"deleted": 0, "status": "disabled"}
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Calculate cutoff date
+            cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=RETENTION_DAYS)).isoformat()
+
+            # Count logs to be deleted
+            cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE timestamp < ?", (cutoff_date,))
+            count = cursor.fetchone()[0]
+
+            if count > 0:
+                # Delete old alert enrichment first (foreign key)
+                cursor.execute("""
+                    DELETE FROM alert_enrichment
+                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
+                """, (cutoff_date,))
+
+                # Delete old severity adjustments
+                cursor.execute("""
+                    DELETE FROM severity_adjustments
+                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
+                """, (cutoff_date,))
+
+                # Delete old processing errors
+                cursor.execute("""
+                    DELETE FROM processing_errors
+                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
+                """, (cutoff_date,))
+
+                # Delete old logs
+                cursor.execute("DELETE FROM raw_logs WHERE timestamp < ?", (cutoff_date,))
+
+                conn.commit()
+                logger.info(f"Data retention: Deleted {count} logs older than {RETENTION_DAYS} days")
+
+            return {"deleted": count, "cutoff_date": cutoff_date, "status": "success"}
+
+    except Exception as e:
+        logger.error(f"Data retention cleanup failed: {e}")
+        return {"deleted": 0, "status": "error", "error": str(e)}
+
+def retention_worker():
+    """Background thread for periodic data retention cleanup."""
+    logger.info(f"Data retention worker started (interval: {RETENTION_CHECK_INTERVAL}s, retain: {RETENTION_DAYS} days)")
+
+    while INGESTOR_RUNNING.is_set():
+        try:
+            time.sleep(RETENTION_CHECK_INTERVAL)
+            if RETENTION_ENABLED:
+                result = cleanup_old_logs()
+                logger.info(f"Retention cleanup completed: {result}")
+        except Exception as e:
+            logger.error(f"Retention worker error: {e}")
+
+# ==============================================================================
+# 5c. Alerting Functions
+# ==============================================================================
+async def send_webhook_alert(alert_data: Dict[str, Any]) -> bool:
+    """Send alert via webhook."""
+    if not ALERT_WEBHOOK_URL:
+        return False
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                ALERT_WEBHOOK_URL,
+                json=alert_data,
+                timeout=10.0
+            )
+            success = response.status_code < 300
+            if success:
+                ALERTS_SENT.labels(channel="webhook", severity=alert_data.get("severity", "unknown")).inc()
+            return success
+    except Exception as e:
+        logger.error(f"Webhook alert failed: {e}")
+        return False
+
+def send_webhook_alert_sync(alert_data: Dict[str, Any]) -> bool:
+    """Synchronous webhook alert for use in background threads."""
+    if not ALERT_WEBHOOK_URL:
+        return False
+
+    try:
+        with httpx.Client() as client:
+            response = client.post(
+                ALERT_WEBHOOK_URL,
+                json=alert_data,
+                timeout=10.0
+            )
+            success = response.status_code < 300
+            if success:
+                ALERTS_SENT.labels(channel="webhook", severity=alert_data.get("severity", "unknown")).inc()
+            return success
+    except Exception as e:
+        logger.error(f"Webhook alert failed: {e}")
+        return False
+
+def should_alert(severity: str) -> bool:
+    """Determine if an alert should be sent based on severity threshold."""
+    if not ALERTING_ENABLED:
+        return False
+
+    severity_levels = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    threshold_level = severity_levels.get(ALERT_SEVERITY_THRESHOLD, 3)
+    current_level = severity_levels.get(severity, 0)
+
+    return current_level >= threshold_level
+
+def trigger_alert(log_id: int, severity: str, event_type: str, summary: str, host: str, raw_log: str):
+    """Trigger an alert for a security event."""
+    if not should_alert(severity):
+        return
+
+    alert_data = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "source": "AI-SIEM",
+        "severity": severity,
+        "event_type": event_type,
+        "summary": summary,
+        "host": host,
+        "log_id": log_id,
+        "raw_log": raw_log[:500] if raw_log else "",
+        "alert_type": "security_event"
+    }
+
+    # Send webhook alert
+    if ALERT_WEBHOOK_URL:
+        try:
+            send_webhook_alert_sync(alert_data)
+        except Exception as e:
+            logger.error(f"Failed to send webhook alert: {e}")
+
+    logger.info(f"Alert triggered: {severity} - {event_type} on {host}")
+
+# ==============================================================================
+# 5d. Prometheus Metrics Update Functions
+# ==============================================================================
+def update_prometheus_metrics():
+    """Update Prometheus gauge metrics."""
+    PENDING_LOGS_GAUGE.set(PENDING_LOGS_COUNT)
+    PROCESSED_LOGS_GAUGE.set(PROCESSED_LOGS_COUNT)
+    TOTAL_LOGS_GAUGE.set(TOTAL_LOGS_COUNT)
+    PROCESSOR_ACTIVE_GAUGE.set(1 if PROCESSOR_ACTIVE else 0)
+
+    # Update knowledge base size
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM ai_knowledge")
+            KNOWLEDGE_BASE_SIZE.set(cursor.fetchone()[0])
+    except:
+        pass
 
 # ==============================================================================
 # 6. Elasticsearch/OpenSearch Management
@@ -1082,11 +1436,12 @@ def analyze_logic(raw_log: str, host: str = None, source_ip: str = None) -> Dict
 
 def processor_loop():
     """Main processing loop for ingesting and analyzing logs."""
-    BATCH_SIZE = 5
-    SLEEP_WHEN_EMPTY = 3
-    MAX_RETRIES = 3
+    # Use global config values (from environment variables)
+    batch_size = BATCH_SIZE
+    sleep_when_empty = SLEEP_WHEN_EMPTY
+    max_retries = MAX_RETRIES
 
-    logger.info("🚀 Processor loop started")
+    logger.info(f"🚀 Processor loop started (batch_size={batch_size}, sleep={sleep_when_empty}s)")
 
     while INGESTOR_RUNNING.is_set():
         try:
@@ -1095,13 +1450,14 @@ def processor_loop():
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT id, raw_log FROM raw_logs WHERE status='PENDING' LIMIT ?",
-                    (BATCH_SIZE,)
+                    (batch_size,)
                 )
                 rows = cursor.fetchall()
 
             if not rows:
                 set_processor_active(False)
-                time.sleep(SLEEP_WHEN_EMPTY)
+                update_prometheus_metrics()
+                time.sleep(sleep_when_empty)
                 continue
 
             set_processor_active(True)
@@ -1113,9 +1469,9 @@ def processor_loop():
                 raw_log = row['raw_log']
 
                 # Try processing with retries
-                for attempt in range(1, MAX_RETRIES + 1):
+                for attempt in range(1, max_retries + 1):
                     try:
-                        logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{MAX_RETRIES})...")
+                        logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{max_retries})...")
 
                         # Extract host from log first (needed for conditional rules)
                         extracted_host = extract_host_from_log(raw_log)
@@ -1194,12 +1550,28 @@ def processor_loop():
                         # Log success
                         logger.info(f"✅ Processed log {log_id} - {severity} - {event_type} - Host: {extracted_host}")
 
+                        # Record Prometheus metrics
+                        LOGS_PROCESSED.labels(severity=severity, analyzer=analyzer).inc()
+                        PROCESSING_TIME.labels(analyzer=analyzer).observe(processing_time_ms / 1000.0)
+                        update_prometheus_metrics()
+
+                        # Trigger alert if severity threshold met
+                        if should_alert(severity):
+                            trigger_alert(
+                                log_id=log_id,
+                                severity=severity,
+                                event_type=event_type,
+                                summary=analysis.get('summary', ''),
+                                host=extracted_host,
+                                raw_log=raw_log
+                            )
+
                         break  # Success - exit retry loop
 
                     except Exception as e:
-                        logger.error(f"❌ Error processing log {log_id} (attempt {attempt}/{MAX_RETRIES}): {e}")
+                        logger.error(f"❌ Error processing log {log_id} (attempt {attempt}/{max_retries}): {e}")
 
-                        if attempt == MAX_RETRIES:
+                        if attempt == max_retries:
                             # Final attempt failed - mark as error
                             try:
                                 with get_db() as conn_err:
@@ -1214,7 +1586,8 @@ def processor_loop():
                                     )
                                     conn_err.commit()
                                 update_global_counts()
-                                logger.error(f"💀 Log {log_id} failed after {MAX_RETRIES} attempts")
+                                LOGS_ERRORS.inc()
+                                logger.error(f"💀 Log {log_id} failed after {max_retries} attempts")
                             except Exception as db_error:
                                 logger.error(f"Failed to record error for log {log_id}: {db_error}")
                         else:
@@ -1259,6 +1632,178 @@ class ConditionalFeedbackRequest(BaseModel):
 
 # ==============================================================================
 # 12. API Endpoints
+# ==============================================================================
+
+# ==============================================================================
+# 12a. Authentication Endpoints
+# ==============================================================================
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=100)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def login(request: LoginRequest):
+    """Authenticate and receive a JWT token."""
+    if not AUTH_ENABLED:
+        # Return a token anyway for API consistency
+        token = create_access_token({"sub": "anonymous", "role": "admin"})
+        return TokenResponse(
+            access_token=token,
+            expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        )
+
+    # Verify credentials
+    if request.username != ADMIN_USERNAME:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
+        )
+
+    # Check password hash if configured, otherwise use default
+    if ADMIN_PASSWORD_HASH:
+        if not verify_password(request.password, ADMIN_PASSWORD_HASH):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+    else:
+        # Default password for development (CHANGE IN PRODUCTION!)
+        if request.password != "changeme":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+
+    # Create token
+    token = create_access_token({"sub": request.username, "role": "admin"})
+
+    logger.info(f"User {request.username} logged in successfully")
+
+    return TokenResponse(
+        access_token=token,
+        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+
+@app.get("/api/auth/me")
+async def get_current_user_info(user: dict = Depends(get_current_user)):
+    """Get current authenticated user information."""
+    return {
+        "username": user.get("username"),
+        "role": user.get("role"),
+        "auth_enabled": AUTH_ENABLED
+    }
+
+@app.post("/api/auth/refresh")
+async def refresh_token(user: dict = Depends(get_current_user)):
+    """Refresh the JWT token."""
+    token = create_access_token({"sub": user.get("username"), "role": user.get("role")})
+    return TokenResponse(
+        access_token=token,
+        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+
+@app.get("/api/auth/hash-password")
+async def hash_password_util(password: str, user: dict = Depends(get_current_user)):
+    """Utility endpoint to generate password hash for configuration."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"hash": get_password_hash(password)}
+
+# ==============================================================================
+# 12b. Prometheus Metrics Endpoint
+# ==============================================================================
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint."""
+    update_prometheus_metrics()
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+# ==============================================================================
+# 12c. Data Retention Endpoints
+# ==============================================================================
+@app.get("/api/retention/status")
+async def get_retention_status(user: dict = Depends(get_current_user)):
+    """Get data retention policy status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Count logs by age
+        cursor.execute("""
+            SELECT
+                SUM(CASE WHEN timestamp > datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7_days,
+                SUM(CASE WHEN timestamp > datetime('now', '-30 days') THEN 1 ELSE 0 END) as last_30_days,
+                SUM(CASE WHEN timestamp > datetime('now', '-90 days') THEN 1 ELSE 0 END) as last_90_days,
+                COUNT(*) as total
+            FROM raw_logs
+        """)
+        row = cursor.fetchone()
+
+    return {
+        "retention_enabled": RETENTION_ENABLED,
+        "retention_days": RETENTION_DAYS,
+        "check_interval_hours": RETENTION_CHECK_INTERVAL // 3600,
+        "log_counts": {
+            "last_7_days": row[0] or 0,
+            "last_30_days": row[1] or 0,
+            "last_90_days": row[2] or 0,
+            "total": row[3] or 0
+        }
+    }
+
+@app.post("/api/retention/cleanup")
+async def trigger_cleanup(user: dict = Depends(get_current_user)):
+    """Manually trigger data retention cleanup."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    result = cleanup_old_logs()
+    return result
+
+# ==============================================================================
+# 12d. Alerting Endpoints
+# ==============================================================================
+@app.get("/api/alerting/status")
+async def get_alerting_status(user: dict = Depends(get_current_user)):
+    """Get alerting configuration status."""
+    return {
+        "alerting_enabled": ALERTING_ENABLED,
+        "webhook_configured": bool(ALERT_WEBHOOK_URL),
+        "email_enabled": ALERT_EMAIL_ENABLED,
+        "severity_threshold": ALERT_SEVERITY_THRESHOLD
+    }
+
+@app.post("/api/alerting/test")
+async def test_alert(user: dict = Depends(get_current_user)):
+    """Send a test alert to verify configuration."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    test_alert_data = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "source": "AI-SIEM",
+        "severity": "Medium",
+        "event_type": "Test Alert",
+        "summary": "This is a test alert from AI-SIEM",
+        "host": "test-host",
+        "log_id": 0,
+        "alert_type": "test"
+    }
+
+    success = await send_webhook_alert(test_alert_data)
+
+    return {
+        "status": "success" if success else "failed",
+        "message": "Test alert sent" if success else "Failed to send test alert"
+    }
+
+# ==============================================================================
+# 12e. Public Endpoints (No Auth Required)
 # ==============================================================================
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -3076,7 +3621,16 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ==============================================================================
 if __name__ == "__main__":
     try:
-        logger.info("Starting AXS ICT Hybrid SOC Agent v2.0.0")
+        logger.info("=" * 60)
+        logger.info("Starting AXS ICT Hybrid SOC Agent v3.0.0")
+        logger.info("=" * 60)
+
+        # Log configuration
+        logger.info(f"Authentication: {'ENABLED' if AUTH_ENABLED else 'DISABLED'}")
+        logger.info(f"CORS Origins: {'ALL' if CORS_ALLOW_ALL else CORS_ORIGINS}")
+        logger.info(f"Data Retention: {RETENTION_DAYS} days ({'ENABLED' if RETENTION_ENABLED else 'DISABLED'})")
+        logger.info(f"Alerting: {'ENABLED' if ALERTING_ENABLED else 'DISABLED'}")
+        logger.info(f"Batch Size: {BATCH_SIZE}, Sleep When Empty: {SLEEP_WHEN_EMPTY}s")
 
         validate_config()
         init_db()
@@ -3094,13 +3648,22 @@ if __name__ == "__main__":
         threading.Thread(target=tcp_ingestor_thread, daemon=True, name="Ingestor").start()
         threading.Thread(target=processor_loop, daemon=True, name="Processor").start()
 
+        # Start data retention worker if enabled
+        if RETENTION_ENABLED:
+            threading.Thread(target=retention_worker, daemon=True, name="Retention").start()
+            logger.info("Data retention worker started")
+
         # Wait a moment for threads to start
         time.sleep(1)
         logger.info("Background threads started successfully")
 
         update_global_counts()
+        update_prometheus_metrics()
 
         logger.info(f"Starting API server on {HOST_IP}:{API_PORT}")
+        logger.info(f"Prometheus metrics available at http://{HOST_IP}:{API_PORT}/metrics")
+        logger.info(f"Dashboard available at http://{HOST_IP}:{API_PORT}/")
+        logger.info("=" * 60)
 
         uvicorn.run(
             app,

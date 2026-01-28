@@ -1,0 +1,24 @@
+# Grafana Datasource Configuration for AI-SIEM
+apiVersion: 1
+
+datasources:
+  # Prometheus for metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # OpenSearch for log search
+  - name: OpenSearch
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: http://opensearch:9200
+    database: ai-analyzed-logs
+    jsonData:
+      timeField: "@timestamp"
+      esVersion: "2.0.0"
+      logMessageField: raw_log
+      logLevelField: severity
+    editable: false

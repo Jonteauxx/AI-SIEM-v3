@@ -1,0 +1,262 @@
+version: '3.8'
+
+# AI-SIEM v3 - Docker Compose Configuration
+# Multi-container setup with all required services
+
+services:
+  # ==============================================================================
+  # SIEM API Service - Main Application
+  # ==============================================================================
+  siem-api:
+    image: soc-agent-siem-api:latest
+    # Uncomment below to build from source instead:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: siem-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8080}:8000"
+      - "${LISTEN_PORT:-5047}:5046"
+    environment:
+      # Database
+      - DB_NAME=/app/data/ai_agent_logs.db
+      # Elasticsearch/OpenSearch
+      - ES_HOSTS=http://opensearch:9200
+      - ES_INDEX=${ES_INDEX:-ai-analyzed-logs}
+      # Ollama LLM
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral:7b}
+      # Network
+      - HOST_IP=0.0.0.0
+      - API_PORT=8000
+      - LISTEN_PORT=5046
+      # Processing
+      - BATCH_SIZE=${BATCH_SIZE:-5}
+      - SLEEP_WHEN_EMPTY=${SLEEP_WHEN_EMPTY:-3}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      # Security - Authentication
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
+      - API_KEY=${API_KEY:-}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-}
+      # CORS
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}
+      - CORS_ALLOW_ALL=${CORS_ALLOW_ALL:-false}
+      # Data Retention
+      - RETENTION_ENABLED=${RETENTION_ENABLED:-true}
+      - RETENTION_DAYS=${RETENTION_DAYS:-90}
+      - RETENTION_CHECK_HOURS=${RETENTION_CHECK_HOURS:-24}
+      # Alerting
+      - ALERTING_ENABLED=${ALERTING_ENABLED:-false}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - ALERT_EMAIL_ENABLED=${ALERT_EMAIL_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-}
+      - ALERT_SEVERITY_THRESHOLD=${ALERT_SEVERITY_THRESHOLD:-High}
+    volumes:
+      - siem-data:/app/data
+      - siem-logs:/app/logs
+      - ./templates:/app/templates:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - siem-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ==============================================================================
+  # Ollama LLM Service
+  # ==============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: siem-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - siem-network
+    # GPU support (uncomment if available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ==============================================================================
+  # OpenSearch Service (Elasticsearch alternative)
+  # ==============================================================================
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: siem-opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "${OPENSEARCH_PORT:-9201}:9200"
+      # Port 9600 is for internal OpenSearch performance analyzer
+      # - "9601:9600"
+    networks:
+      - siem-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'cluster_name'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==============================================================================
+  # OpenSearch Dashboards (Kibana alternative)
+  # ==============================================================================
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.1
+    container_name: siem-dashboards
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARDS_PORT:-5601}:5601"
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # FluentD Log Collector
+  # ==============================================================================
+  fluentd:
+    image: fluent/fluentd:v1.16-debian
+    container_name: siem-fluentd
+    restart: unless-stopped
+    ports:
+      - "${FLUENTD_PORT:-24224}:24224"
+      - "${FLUENTD_PORT:-24224}:24224/udp"
+    volumes:
+      - ./fluentd/conf:/fluentd/etc:ro
+      - fluentd-logs:/fluentd/log
+    environment:
+      - FLUENTD_CONF=fluent.conf
+    depends_on:
+      - siem-api
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # Prometheus Metrics Collector
+  # ==============================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: siem-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # Grafana Dashboard
+  # ==============================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: siem-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # Nginx Reverse Proxy (Optional - for production)
+  # ==============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: siem-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - siem-api
+    networks:
+      - siem-network
+    profiles:
+      - production
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  siem-network:
+    driver: bridge
+    name: siem-network
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  siem-data:
+    name: siem-data
+  siem-logs:
+    name: siem-logs
+  ollama-data:
+    name: ollama-data
+  opensearch-data:
+    name: opensearch-data
+  fluentd-logs:
+    name: fluentd-logs
+  prometheus-data:
+    name: prometheus-data
+  grafana-data:
+    name: grafana-data
