@@ -14,26 +14,24 @@ import signal
 import sys
 import logging
 import psutil
-import secrets
-import bleach
-import httpx
+import asyncio
 from contextlib import contextmanager
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from ollama import Client
 from elasticsearch import Elasticsearch
-from fastapi import FastAPI, HTTPException, Request, Depends, status
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from jose import JWTError, jwt
 from passlib.context import CryptContext
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from starlette.responses import Response
+from jose import JWTError, jwt
+from datetime import timedelta
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, status
 
 # ==============================================================================
 # 1. Logging Configuration
@@ -63,77 +61,16 @@ HOST_IP = os.getenv("HOST_IP", '0.0.0.0')
 API_PORT = int(os.getenv("API_PORT", "8000"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
-# Processing Configuration (moved from hardcoded values)
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-SLEEP_WHEN_EMPTY = int(os.getenv("SLEEP_WHEN_EMPTY", "3"))
+# Authentication Configuration
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-MIN-32-CHARS")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 
-# ==============================================================================
-# 2b. Security Configuration
-# ==============================================================================
-# JWT Settings
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
-JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
-
-# API Key for service-to-service communication
-API_KEY = os.getenv("API_KEY", "")
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-# Authentication toggle (can disable for development)
-AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
-
-# Default admin credentials (CHANGE IN PRODUCTION!)
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")  # Pre-hashed password
-
-# CORS Configuration
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
-CORS_ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
-
-# Password hashing
+# Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer(auto_error=False)
-
-# ==============================================================================
-# 2c. Data Retention Configuration
-# ==============================================================================
-RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "90"))
-RETENTION_ENABLED = os.getenv("RETENTION_ENABLED", "true").lower() == "true"
-RETENTION_CHECK_INTERVAL = int(os.getenv("RETENTION_CHECK_HOURS", "24")) * 3600
-
-# ==============================================================================
-# 2d. Alerting Configuration
-# ==============================================================================
-ALERTING_ENABLED = os.getenv("ALERTING_ENABLED", "false").lower() == "true"
-ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "")
-ALERT_EMAIL_ENABLED = os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true"
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",")
-ALERT_SEVERITY_THRESHOLD = os.getenv("ALERT_SEVERITY_THRESHOLD", "High")  # High or Critical
-
-# ==============================================================================
-# 2e. Prometheus Metrics
-# ==============================================================================
-# Counters
-LOGS_INGESTED = Counter('siem_logs_ingested_total', 'Total number of logs ingested')
-LOGS_PROCESSED = Counter('siem_logs_processed_total', 'Total number of logs processed', ['severity', 'analyzer'])
-LOGS_ERRORS = Counter('siem_logs_errors_total', 'Total number of processing errors')
-API_REQUESTS = Counter('siem_api_requests_total', 'Total API requests', ['endpoint', 'method', 'status'])
-ALERTS_SENT = Counter('siem_alerts_sent_total', 'Total alerts sent', ['channel', 'severity'])
-
-# Histograms
-PROCESSING_TIME = Histogram('siem_log_processing_seconds', 'Time spent processing logs', ['analyzer'])
-API_LATENCY = Histogram('siem_api_latency_seconds', 'API request latency', ['endpoint'])
-
-# Gauges
-PENDING_LOGS_GAUGE = Gauge('siem_pending_logs', 'Number of pending logs')
-PROCESSED_LOGS_GAUGE = Gauge('siem_processed_logs', 'Number of processed logs')
-TOTAL_LOGS_GAUGE = Gauge('siem_total_logs', 'Total number of logs')
-PROCESSOR_ACTIVE_GAUGE = Gauge('siem_processor_active', 'Whether log processor is active')
-KNOWLEDGE_BASE_SIZE = Gauge('siem_knowledge_base_entries', 'Number of entries in AI knowledge base')
+security = HTTPBearer()
 
 INGESTOR_RUNNING = threading.Event()
 INGESTOR_RUNNING.set()
@@ -164,123 +101,33 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if CORS_ALLOW_ALL else CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ==============================================================================
-# 3b. Authentication Functions
+# 3.5. Security Headers Middleware
 # ==============================================================================
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
-    """Create a JWT access token."""
-    to_encode = data.copy()
-    expire = datetime.datetime.utcnow() + (expires_delta or datetime.timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-
-async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
-    """Verify JWT token from Authorization header."""
-    if not AUTH_ENABLED:
-        return {"sub": "anonymous", "role": "admin"}
-
-    if credentials is None:
-        return None
-
-    try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        return payload
-    except JWTError:
-        return None
-
-async def verify_api_key(api_key: str = Depends(API_KEY_HEADER)) -> Optional[str]:
-    """Verify API key from header."""
-    if not AUTH_ENABLED:
-        return "anonymous"
-
-    if api_key and API_KEY and api_key == API_KEY:
-        return "api_key_user"
-    return None
-
-async def get_current_user(
-    token_payload: Optional[dict] = Depends(verify_token),
-    api_key_user: Optional[str] = Depends(verify_api_key)
-) -> dict:
-    """Get current user from either JWT or API key."""
-    if not AUTH_ENABLED:
-        return {"username": "anonymous", "role": "admin"}
-
-    if token_payload:
-        return {"username": token_payload.get("sub"), "role": token_payload.get("role", "user")}
-
-    if api_key_user:
-        return {"username": api_key_user, "role": "service"}
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authentication credentials",
-        headers={"WWW-Authenticate": "Bearer"},
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "img-src 'self' data: https: https://*.tile.openstreetmap.org; "
+        "font-src 'self' data:; "
+        "connect-src 'self'"
     )
-
-async def get_optional_user(
-    token_payload: Optional[dict] = Depends(verify_token),
-    api_key_user: Optional[str] = Depends(verify_api_key)
-) -> Optional[dict]:
-    """Get current user if authenticated, None otherwise."""
-    if not AUTH_ENABLED:
-        return {"username": "anonymous", "role": "admin"}
-
-    if token_payload:
-        return {"username": token_payload.get("sub"), "role": token_payload.get("role", "user")}
-
-    if api_key_user:
-        return {"username": api_key_user, "role": "service"}
-
-    return None
-
-# ==============================================================================
-# 3c. Input Sanitization Functions
-# ==============================================================================
-def sanitize_log_content(log_content: str) -> str:
-    """Sanitize log content to prevent injection attacks."""
-    if not log_content:
-        return ""
-
-    # Remove potentially dangerous HTML/script content
-    cleaned = bleach.clean(log_content, tags=[], strip=True)
-
-    # Limit length to prevent DoS
-    max_length = 10000
-    if len(cleaned) > max_length:
-        cleaned = cleaned[:max_length] + "...[truncated]"
-
-    return cleaned
-
-def sanitize_search_query(query: str) -> str:
-    """Sanitize search query to prevent SQL injection."""
-    if not query:
-        return ""
-
-    # Remove SQL injection patterns
-    dangerous_patterns = [
-        r"--", r";", r"'", r'"', r"/*", r"*/", r"xp_", r"sp_",
-        r"UNION", r"SELECT", r"INSERT", r"UPDATE", r"DELETE", r"DROP"
-    ]
-
-    cleaned = query
-    for pattern in dangerous_patterns:
-        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
-
-    return cleaned[:500]  # Limit length
+    return response
 
 # ==============================================================================
 # 4. Configuration Validation
@@ -553,6 +400,151 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_knowledge_conditions_pattern ON ai_knowledge_conditions(pattern_hash)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_knowledge_conditions_active ON ai_knowledge_conditions(is_active)")
 
+        # Authentication Tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                full_name TEXT,
+                email TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                is_admin BOOLEAN DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_login TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_hash TEXT UNIQUE NOT NULL,
+                key_name TEXT NOT NULL,
+                user_id INTEGER,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT,
+                last_used TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                ip_address TEXT,
+                success BOOLEAN DEFAULT 0,
+                attempted_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_time ON login_attempts(attempted_at)")
+
+        # Add role column to users if not exists
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = [col[1] for col in cursor.fetchall()]
+        if 'role' not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'analyst'")
+            cursor.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1")
+
+        # NEW: Audit Log Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id TEXT,
+                details TEXT,
+                ip_address TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(created_at)")
+
+        # NEW: Alert Triage Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alert_triage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER UNIQUE,
+                triage_status TEXT DEFAULT 'new',
+                assigned_to TEXT,
+                notes TEXT,
+                triaged_by TEXT,
+                triaged_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (log_id) REFERENCES raw_logs(id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_triage_status ON alert_triage(triage_status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_triage_log ON alert_triage(log_id)")
+
+        # NEW: Shift Notes Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS shift_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                author TEXT NOT NULL,
+                shift_date TEXT NOT NULL,
+                shift_period TEXT DEFAULT 'day',
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                priority TEXT DEFAULT 'normal',
+                acknowledged_by TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_shift_notes_date ON shift_notes(shift_date)")
+
+        # NEW: SLA Config Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sla_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                severity TEXT UNIQUE NOT NULL,
+                response_minutes INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO sla_config (severity, response_minutes) VALUES
+            ('Critical', 15),
+            ('High', 60),
+            ('Medium', 240),
+            ('Low', 1440)
+        """)
+
+        # NEW: Saved Searches Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS saved_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                name TEXT NOT NULL,
+                filters TEXT NOT NULL,
+                is_shared BOOLEAN DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # Create default admin user if not exists
+        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+        if cursor.fetchone()[0] == 0:
+            admin_password_hash = pwd_context.hash("changeme")
+            cursor.execute("""
+                INSERT INTO users (username, password_hash, full_name, is_admin)
+                VALUES (?, ?, ?, ?)
+            """, ("admin", admin_password_hash, "System Administrator", 1))
+            logger.info("Default admin user created (username: admin, password: changeme)")
+
         # Insert default correlation rules
         cursor.execute("""
             INSERT OR IGNORE INTO correlation_rules
@@ -579,166 +571,217 @@ def check_db_health() -> bool:
         return False
 
 # ==============================================================================
-# 5b. Data Retention Management
+# 5.5. Authentication Helper Functions
 # ==============================================================================
-def cleanup_old_logs() -> Dict[str, int]:
-    """Delete logs older than RETENTION_DAYS."""
-    if not RETENTION_ENABLED:
-        return {"deleted": 0, "status": "disabled"}
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against a hashed password"""
+    return pwd_context.verify(plain_password, hashed_password)
 
+def get_password_hash(password: str) -> str:
+    """Hash a password for storing"""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a JWT access token"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire, "type": "access"})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+def create_refresh_token(data: dict) -> str:
+    """Create a JWT refresh token"""
+    to_encode = data.copy()
+    expire = datetime.datetime.utcnow() + timedelta(days=JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh"})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Authenticate a user by username and password"""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, password_hash, full_name, email, is_active, is_admin, role
+                FROM users WHERE username = ?
+            """, (username,))
+            user = cursor.fetchone()
 
-            # Calculate cutoff date
-            cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=RETENTION_DAYS)).isoformat()
+            if not user:
+                return None
 
-            # Count logs to be deleted
-            cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE timestamp < ?", (cutoff_date,))
-            count = cursor.fetchone()[0]
+            if not user['is_active']:
+                return None
 
-            if count > 0:
-                # Delete old alert enrichment first (foreign key)
+            if not verify_password(password, user['password_hash']):
+                return None
+
+            # Update last login
+            cursor.execute("""
+                UPDATE users SET last_login = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (user['id'],))
+            conn.commit()
+
+            return {
+                "id": user['id'],
+                "username": user['username'],
+                "full_name": user['full_name'],
+                "email": user['email'],
+                "is_admin": bool(user['is_admin']),
+                "role": user['role'] or ('admin' if user['is_admin'] else 'analyst')
+            }
+    except Exception as e:
+        logger.error(f"Authentication error: {e}")
+        return None
+
+def verify_api_key(api_key: str) -> Optional[Dict[str, Any]]:
+    """Verify an API key and return associated user"""
+    try:
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT u.id, u.username, u.full_name, u.is_admin, a.id as key_id
+                FROM api_keys a
+                JOIN users u ON a.user_id = u.id
+                WHERE a.key_hash = ? AND a.is_active = 1 AND u.is_active = 1
+                AND (a.expires_at IS NULL OR a.expires_at > datetime('now'))
+            """, (key_hash,))
+            result = cursor.fetchone()
+
+            if result:
+                # Update last used timestamp
                 cursor.execute("""
-                    DELETE FROM alert_enrichment
-                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
-                """, (cutoff_date,))
-
-                # Delete old severity adjustments
-                cursor.execute("""
-                    DELETE FROM severity_adjustments
-                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
-                """, (cutoff_date,))
-
-                # Delete old processing errors
-                cursor.execute("""
-                    DELETE FROM processing_errors
-                    WHERE log_id IN (SELECT id FROM raw_logs WHERE timestamp < ?)
-                """, (cutoff_date,))
-
-                # Delete old logs
-                cursor.execute("DELETE FROM raw_logs WHERE timestamp < ?", (cutoff_date,))
-
+                    UPDATE api_keys SET last_used = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (result['key_id'],))
                 conn.commit()
-                logger.info(f"Data retention: Deleted {count} logs older than {RETENTION_DAYS} days")
 
-            return {"deleted": count, "cutoff_date": cutoff_date, "status": "success"}
-
+                return {
+                    "id": result['id'],
+                    "username": result['username'],
+                    "full_name": result['full_name'],
+                    "is_admin": bool(result['is_admin'])
+                }
+            return None
     except Exception as e:
-        logger.error(f"Data retention cleanup failed: {e}")
-        return {"deleted": 0, "status": "error", "error": str(e)}
+        logger.error(f"API key verification error: {e}")
+        return None
 
-def retention_worker():
-    """Background thread for periodic data retention cleanup."""
-    logger.info(f"Data retention worker started (interval: {RETENTION_CHECK_INTERVAL}s, retain: {RETENTION_DAYS} days)")
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """Get current user from JWT token or API key"""
+    # Try API key first (from header)
+    if api_key:
+        user = verify_api_key(api_key)
+        if user:
+            return user
 
-    while INGESTOR_RUNNING.is_set():
-        try:
-            time.sleep(RETENTION_CHECK_INTERVAL)
-            if RETENTION_ENABLED:
-                result = cleanup_old_logs()
-                logger.info(f"Retention cleanup completed: {result}")
-        except Exception as e:
-            logger.error(f"Retention worker error: {e}")
+    # Try JWT token
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-# ==============================================================================
-# 5c. Alerting Functions
-# ==============================================================================
-async def send_webhook_alert(alert_data: Dict[str, Any]) -> bool:
-    """Send alert via webhook."""
-    if not ALERT_WEBHOOK_URL:
-        return False
-
+    token = credentials.credentials
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                ALERT_WEBHOOK_URL,
-                json=alert_data,
-                timeout=10.0
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        token_type: str = payload.get("type")
+
+        if username is None or token_type != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
             )
-            success = response.status_code < 300
-            if success:
-                ALERTS_SENT.labels(channel="webhook", severity=alert_data.get("severity", "unknown")).inc()
-            return success
-    except Exception as e:
-        logger.error(f"Webhook alert failed: {e}")
-        return False
 
-def send_webhook_alert_sync(alert_data: Dict[str, Any]) -> bool:
-    """Synchronous webhook alert for use in background threads."""
-    if not ALERT_WEBHOOK_URL:
-        return False
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, full_name, email, is_admin, role
+                FROM users WHERE username = ? AND is_active = 1
+            """, (username,))
+            user = cursor.fetchone()
 
-    try:
-        with httpx.Client() as client:
-            response = client.post(
-                ALERT_WEBHOOK_URL,
-                json=alert_data,
-                timeout=10.0
-            )
-            success = response.status_code < 300
-            if success:
-                ALERTS_SENT.labels(channel="webhook", severity=alert_data.get("severity", "unknown")).inc()
-            return success
-    except Exception as e:
-        logger.error(f"Webhook alert failed: {e}")
-        return False
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
-def should_alert(severity: str) -> bool:
-    """Determine if an alert should be sent based on severity threshold."""
-    if not ALERTING_ENABLED:
-        return False
+            return {
+                "id": user['id'],
+                "username": user['username'],
+                "full_name": user['full_name'],
+                "email": user['email'],
+                "is_admin": bool(user['is_admin']),
+                "role": user['role'] or ('admin' if user['is_admin'] else 'analyst')
+            }
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    severity_levels = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
-    threshold_level = severity_levels.get(ALERT_SEVERITY_THRESHOLD, 3)
-    current_level = severity_levels.get(severity, 0)
-
-    return current_level >= threshold_level
-
-def trigger_alert(log_id: int, severity: str, event_type: str, summary: str, host: str, raw_log: str):
-    """Trigger an alert for a security event."""
-    if not should_alert(severity):
-        return
-
-    alert_data = {
-        "timestamp": datetime.datetime.now().isoformat(),
-        "source": "AI-SIEM",
-        "severity": severity,
-        "event_type": event_type,
-        "summary": summary,
-        "host": host,
-        "log_id": log_id,
-        "raw_log": raw_log[:500] if raw_log else "",
-        "alert_type": "security_event"
-    }
-
-    # Send webhook alert
-    if ALERT_WEBHOOK_URL:
-        try:
-            send_webhook_alert_sync(alert_data)
-        except Exception as e:
-            logger.error(f"Failed to send webhook alert: {e}")
-
-    logger.info(f"Alert triggered: {severity} - {event_type} on {host}")
-
-# ==============================================================================
-# 5d. Prometheus Metrics Update Functions
-# ==============================================================================
-def update_prometheus_metrics():
-    """Update Prometheus gauge metrics."""
-    PENDING_LOGS_GAUGE.set(PENDING_LOGS_COUNT)
-    PROCESSED_LOGS_GAUGE.set(PROCESSED_LOGS_COUNT)
-    TOTAL_LOGS_GAUGE.set(TOTAL_LOGS_COUNT)
-    PROCESSOR_ACTIVE_GAUGE.set(1 if PROCESSOR_ACTIVE else 0)
-
-    # Update knowledge base size
+def record_login_attempt(username: str, ip_address: str, success: bool):
+    """Record a login attempt for security monitoring"""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM ai_knowledge")
-            KNOWLEDGE_BASE_SIZE.set(cursor.fetchone()[0])
-    except:
-        pass
+            cursor.execute("""
+                INSERT INTO login_attempts (username, ip_address, success)
+                VALUES (?, ?, ?)
+            """, (username, ip_address, success))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to record login attempt: {e}")
+
+def record_audit(user_id: int, username: str, action: str, entity_type: str = None,
+                 entity_id: str = None, details: str = None, ip_address: str = None):
+    """Record an action in the audit log"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, details, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, action, entity_type, entity_id, details, ip_address))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to record audit log: {e}")
+
+def is_info_level_log(raw_log: str) -> bool:
+    """Detect routine/informational logs that bypass AI analysis"""
+    info_patterns = [
+        r'health[\s_-]?check',
+        r'heartbeat',
+        r'keepalive',
+        r'service\s+(started|running|active|status)',
+        r'cron.*completed',
+        r'logrotate',
+        r'session\s+opened\s+for\s+user\s+root\s+by',
+        r'systemd.*started',
+        r'dhcp(discover|request|ack)',
+        r'ntp.*synchronized',
+        r'kernel.*loaded',
+    ]
+    log_lower = raw_log.lower()
+    for pattern in info_patterns:
+        if re.search(pattern, log_lower):
+            return True
+    return False
 
 # ==============================================================================
 # 6. Elasticsearch/OpenSearch Management
@@ -811,22 +854,16 @@ def check_ollama_health() -> bool:
 def analyze_with_llm(raw_log: str) -> Dict[str, Any]:
     ollama_client = Client(host=OLLAMA_URL)
 
-    prompt = f"""Analyze this security log and respond ONLY with valid JSON in this exact format:
-{{
-    "severity": "Low|Medium|High|Critical",
-    "event_type": "string",
-    "summary": "brief description"
-}}
+    prompt = f"""Respond ONLY with valid JSON:
+{{"severity":"Low|Medium|High|Critical","event_type":"string","summary":"brief description"}}
 
-Log to analyze: {raw_log}
-
-Provide a concise security analysis. Focus on: potential threats, anomalies, or routine events."""
+Log: {raw_log}"""
 
     try:
         response = ollama_client.chat(
             model=OLLAMA_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3}
+            options={"temperature": 0.3, "num_thread": 16, "num_ctx": 1024}
         )
 
         response_text = response['message']['content'].strip()
@@ -1436,12 +1473,11 @@ def analyze_logic(raw_log: str, host: str = None, source_ip: str = None) -> Dict
 
 def processor_loop():
     """Main processing loop for ingesting and analyzing logs."""
-    # Use global config values (from environment variables)
-    batch_size = BATCH_SIZE
-    sleep_when_empty = SLEEP_WHEN_EMPTY
-    max_retries = MAX_RETRIES
+    BATCH_SIZE = 5
+    SLEEP_WHEN_EMPTY = 3
+    MAX_RETRIES = 3
 
-    logger.info(f"🚀 Processor loop started (batch_size={batch_size}, sleep={sleep_when_empty}s)")
+    logger.info("🚀 Processor loop started")
 
     while INGESTOR_RUNNING.is_set():
         try:
@@ -1450,14 +1486,13 @@ def processor_loop():
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT id, raw_log FROM raw_logs WHERE status='PENDING' LIMIT ?",
-                    (batch_size,)
+                    (BATCH_SIZE,)
                 )
                 rows = cursor.fetchall()
 
             if not rows:
                 set_processor_active(False)
-                update_prometheus_metrics()
-                time.sleep(sleep_when_empty)
+                time.sleep(SLEEP_WHEN_EMPTY)
                 continue
 
             set_processor_active(True)
@@ -1469,9 +1504,9 @@ def processor_loop():
                 raw_log = row['raw_log']
 
                 # Try processing with retries
-                for attempt in range(1, max_retries + 1):
+                for attempt in range(1, MAX_RETRIES + 1):
                     try:
-                        logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{max_retries})...")
+                        logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{MAX_RETRIES})...")
 
                         # Extract host from log first (needed for conditional rules)
                         extracted_host = extract_host_from_log(raw_log)
@@ -1480,8 +1515,17 @@ def processor_loop():
                         # Measure processing time
                         start_time = time.time()
 
-                        # Analyze the log with host context for conditional rules
-                        analysis = analyze_logic(raw_log, host=extracted_host, source_ip=source_ip)
+                        # Check if this is an info-level log (bypasses AI)
+                        if is_info_level_log(raw_log):
+                            analysis = {
+                                "severity": "Info",
+                                "event_type": "Informational",
+                                "summary": "Routine system log (auto-classified)",
+                                "analyzed_by": "info_filter"
+                            }
+                        else:
+                            # Analyze the log with host context for conditional rules
+                            analysis = analyze_logic(raw_log, host=extracted_host, source_ip=source_ip)
 
                         # Calculate processing time in milliseconds
                         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -1550,28 +1594,12 @@ def processor_loop():
                         # Log success
                         logger.info(f"✅ Processed log {log_id} - {severity} - {event_type} - Host: {extracted_host}")
 
-                        # Record Prometheus metrics
-                        LOGS_PROCESSED.labels(severity=severity, analyzer=analyzer).inc()
-                        PROCESSING_TIME.labels(analyzer=analyzer).observe(processing_time_ms / 1000.0)
-                        update_prometheus_metrics()
-
-                        # Trigger alert if severity threshold met
-                        if should_alert(severity):
-                            trigger_alert(
-                                log_id=log_id,
-                                severity=severity,
-                                event_type=event_type,
-                                summary=analysis.get('summary', ''),
-                                host=extracted_host,
-                                raw_log=raw_log
-                            )
-
                         break  # Success - exit retry loop
 
                     except Exception as e:
-                        logger.error(f"❌ Error processing log {log_id} (attempt {attempt}/{max_retries}): {e}")
+                        logger.error(f"❌ Error processing log {log_id} (attempt {attempt}/{MAX_RETRIES}): {e}")
 
-                        if attempt == max_retries:
+                        if attempt == MAX_RETRIES:
                             # Final attempt failed - mark as error
                             try:
                                 with get_db() as conn_err:
@@ -1586,8 +1614,7 @@ def processor_loop():
                                     )
                                     conn_err.commit()
                                 update_global_counts()
-                                LOGS_ERRORS.inc()
-                                logger.error(f"💀 Log {log_id} failed after {max_retries} attempts")
+                                logger.error(f"💀 Log {log_id} failed after {MAX_RETRIES} attempts")
                             except Exception as db_error:
                                 logger.error(f"Failed to record error for log {log_id}: {db_error}")
                         else:
@@ -1613,6 +1640,29 @@ def processor_loop():
 # ==============================================================================
 # 11. Pydantic Models
 # ==============================================================================
+# 11.5. Authentication Pydantic Models
+# ==============================================================================
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=100)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: Dict[str, Any]
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    full_name: Optional[str]
+    email: Optional[str]
+    is_admin: bool
+
+# ==============================================================================
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000)
 
@@ -1630,180 +1680,12 @@ class ConditionalFeedbackRequest(BaseModel):
     expires_in_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until this rule expires")
     exclude_hosts: Optional[str] = Field(None, description="Comma-separated list of hosts to exclude from this rule")
 
+class ActionChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1000)
+    context: Dict[str, Any] = Field(default_factory=dict, description="Context including current_tab, log_id, host, severity, ip")
+
 # ==============================================================================
 # 12. API Endpoints
-# ==============================================================================
-
-# ==============================================================================
-# 12a. Authentication Endpoints
-# ==============================================================================
-class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=1, max_length=100)
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-
-@app.post("/api/auth/login", response_model=TokenResponse)
-async def login(request: LoginRequest):
-    """Authenticate and receive a JWT token."""
-    if not AUTH_ENABLED:
-        # Return a token anyway for API consistency
-        token = create_access_token({"sub": "anonymous", "role": "admin"})
-        return TokenResponse(
-            access_token=token,
-            expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        )
-
-    # Verify credentials
-    if request.username != ADMIN_USERNAME:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
-        )
-
-    # Check password hash if configured, otherwise use default
-    if ADMIN_PASSWORD_HASH:
-        if not verify_password(request.password, ADMIN_PASSWORD_HASH):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
-            )
-    else:
-        # Default password for development (CHANGE IN PRODUCTION!)
-        if request.password != "changeme":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
-            )
-
-    # Create token
-    token = create_access_token({"sub": request.username, "role": "admin"})
-
-    logger.info(f"User {request.username} logged in successfully")
-
-    return TokenResponse(
-        access_token=token,
-        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
-
-@app.get("/api/auth/me")
-async def get_current_user_info(user: dict = Depends(get_current_user)):
-    """Get current authenticated user information."""
-    return {
-        "username": user.get("username"),
-        "role": user.get("role"),
-        "auth_enabled": AUTH_ENABLED
-    }
-
-@app.post("/api/auth/refresh")
-async def refresh_token(user: dict = Depends(get_current_user)):
-    """Refresh the JWT token."""
-    token = create_access_token({"sub": user.get("username"), "role": user.get("role")})
-    return TokenResponse(
-        access_token=token,
-        expires_in=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
-
-@app.get("/api/auth/hash-password")
-async def hash_password_util(password: str, user: dict = Depends(get_current_user)):
-    """Utility endpoint to generate password hash for configuration."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    return {"hash": get_password_hash(password)}
-
-# ==============================================================================
-# 12b. Prometheus Metrics Endpoint
-# ==============================================================================
-@app.get("/metrics")
-async def prometheus_metrics():
-    """Prometheus metrics endpoint."""
-    update_prometheus_metrics()
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-# ==============================================================================
-# 12c. Data Retention Endpoints
-# ==============================================================================
-@app.get("/api/retention/status")
-async def get_retention_status(user: dict = Depends(get_current_user)):
-    """Get data retention policy status."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-
-        # Count logs by age
-        cursor.execute("""
-            SELECT
-                SUM(CASE WHEN timestamp > datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7_days,
-                SUM(CASE WHEN timestamp > datetime('now', '-30 days') THEN 1 ELSE 0 END) as last_30_days,
-                SUM(CASE WHEN timestamp > datetime('now', '-90 days') THEN 1 ELSE 0 END) as last_90_days,
-                COUNT(*) as total
-            FROM raw_logs
-        """)
-        row = cursor.fetchone()
-
-    return {
-        "retention_enabled": RETENTION_ENABLED,
-        "retention_days": RETENTION_DAYS,
-        "check_interval_hours": RETENTION_CHECK_INTERVAL // 3600,
-        "log_counts": {
-            "last_7_days": row[0] or 0,
-            "last_30_days": row[1] or 0,
-            "last_90_days": row[2] or 0,
-            "total": row[3] or 0
-        }
-    }
-
-@app.post("/api/retention/cleanup")
-async def trigger_cleanup(user: dict = Depends(get_current_user)):
-    """Manually trigger data retention cleanup."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    result = cleanup_old_logs()
-    return result
-
-# ==============================================================================
-# 12d. Alerting Endpoints
-# ==============================================================================
-@app.get("/api/alerting/status")
-async def get_alerting_status(user: dict = Depends(get_current_user)):
-    """Get alerting configuration status."""
-    return {
-        "alerting_enabled": ALERTING_ENABLED,
-        "webhook_configured": bool(ALERT_WEBHOOK_URL),
-        "email_enabled": ALERT_EMAIL_ENABLED,
-        "severity_threshold": ALERT_SEVERITY_THRESHOLD
-    }
-
-@app.post("/api/alerting/test")
-async def test_alert(user: dict = Depends(get_current_user)):
-    """Send a test alert to verify configuration."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    test_alert_data = {
-        "timestamp": datetime.datetime.now().isoformat(),
-        "source": "AI-SIEM",
-        "severity": "Medium",
-        "event_type": "Test Alert",
-        "summary": "This is a test alert from AI-SIEM",
-        "host": "test-host",
-        "log_id": 0,
-        "alert_type": "test"
-    }
-
-    success = await send_webhook_alert(test_alert_data)
-
-    return {
-        "status": "success" if success else "failed",
-        "message": "Test alert sent" if success else "Failed to send test alert"
-    }
-
-# ==============================================================================
-# 12e. Public Endpoints (No Auth Required)
 # ==============================================================================
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -1814,6 +1696,116 @@ async def serve_dashboard():
         raise HTTPException(status_code=404, detail="Dashboard template not found")
 
     return FileResponse('templates/dashboard.html')
+
+# ==============================================================================
+# 12.1. Authentication Endpoints
+# ==============================================================================
+@app.post("/api/auth/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
+async def login(request: Request, login_data: LoginRequest):
+    """
+    Authenticate user and return JWT tokens.
+    Rate limited to 5 attempts per minute per IP address.
+    """
+    client_ip = get_remote_address(request)
+
+    # Authenticate user
+    user = authenticate_user(login_data.username, login_data.password)
+
+    # Record login attempt
+    record_login_attempt(login_data.username, client_ip, user is not None)
+
+    if not user:
+        # Add a small delay to prevent timing attacks
+        await asyncio.sleep(0.5)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Create tokens
+    access_token = create_access_token(data={"sub": user["username"]})
+    refresh_token = create_refresh_token(data={"sub": user["username"]})
+
+    logger.info(f"User {user['username']} logged in from {client_ip}")
+    record_audit(user['id'], user['username'], 'login', 'session', None, None, client_ip)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+@app.post("/api/auth/refresh", response_model=TokenResponse)
+async def refresh_token(token_data: RefreshTokenRequest):
+    """
+    Refresh an access token using a refresh token.
+    """
+    try:
+        payload = jwt.decode(token_data.refresh_token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        token_type: str = payload.get("type")
+
+        if username is None or token_type != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, full_name, email, is_admin
+                FROM users WHERE username = ? AND is_active = 1
+            """, (username,))
+            user = cursor.fetchone()
+
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                )
+
+            user_dict = {
+                "id": user['id'],
+                "username": user['username'],
+                "full_name": user['full_name'],
+                "email": user['email'],
+                "is_admin": bool(user['is_admin'])
+            }
+
+            # Create new tokens
+            access_token = create_access_token(data={"sub": user['username']})
+            new_refresh_token = create_refresh_token(data={"sub": user['username']})
+
+            return {
+                "access_token": access_token,
+                "refresh_token": new_refresh_token,
+                "token_type": "bearer",
+                "user": user_dict
+            }
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
+
+@app.post("/api/auth/logout")
+async def logout(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Logout endpoint (client-side token removal).
+    """
+    logger.info(f"User {current_user['username']} logged out")
+    return {"message": "Successfully logged out"}
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Get current user information from JWT token.
+    """
+    return current_user
 
 @app.get("/health")
 async def health_check():
@@ -1835,7 +1827,7 @@ async def health_check():
 
 @app.get("/api/dashboard-metrics")
 @limiter.limit("120/minute")
-async def get_metrics(request: Request):
+async def get_metrics(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
     active_alerts_count = 0
     es_status = "OFFLINE"
     threats_blocked = 0
@@ -1893,7 +1885,7 @@ async def get_metrics(request: Request):
 
 @app.get("/api/analysis-status")
 @limiter.limit("60/minute")
-async def get_analysis_status(request: Request):
+async def get_analysis_status(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
     total = TOTAL_LOGS_COUNT
     processed = PROCESSED_LOGS_COUNT
 
@@ -1908,7 +1900,7 @@ async def get_analysis_status(request: Request):
 
 @app.get("/api/logs")
 @limiter.limit("100/minute")
-async def get_logs(request: Request, panel: str = "Total Logs"):
+async def get_logs(request: Request, panel: str = "Total Logs", current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get logs filtered by panel type."""
     
     # Try OpenSearch first for alerts and threats
@@ -2026,9 +2018,38 @@ async def search_logs(
     date_from: str = None,
     date_to: str = None,
     limit: int = 100,
-    offset: int = 0
+    offset: int = 0,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Search and filter logs with various criteria."""
+    # Input validation
+    if query and len(query) > 500:
+        raise HTTPException(status_code=400, detail="Query too long (max 500 characters)")
+
+    if query and re.search(r'[;\'"\\]|--|\*\*|UNION|SELECT|DROP|INSERT|DELETE|UPDATE', query, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Invalid characters in query")
+
+    if severity:
+        valid_severities = {'Low', 'Medium', 'High', 'Critical'}
+        severities_list = [s.strip() for s in severity.split(',')]
+        if not all(s in valid_severities for s in severities_list):
+            raise HTTPException(status_code=400, detail="Invalid severity values")
+
+    if host and len(host) > 255:
+        raise HTTPException(status_code=400, detail="Host filter too long (max 255 characters)")
+
+    if event_type and len(event_type) > 100:
+        raise HTTPException(status_code=400, detail="Event type filter too long (max 100 characters)")
+
+    if status and status not in ['PENDING', 'PROCESSED', 'FAILED']:
+        raise HTTPException(status_code=400, detail="Invalid status value")
+
+    if limit > 1000:
+        raise HTTPException(status_code=400, detail="Limit too high (max 1000)")
+
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Offset cannot be negative")
+
     with get_db() as conn:
         cursor = conn.cursor()
 
@@ -2219,7 +2240,7 @@ async def get_logs_queue(request: Request):
 
 @app.post("/api/learn")
 @limiter.limit("10/minute")
-async def learn(request: Request, req: FeedbackRequest):
+async def learn(request: Request, req: FeedbackRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
     with get_db() as conn:
         cursor = conn.cursor()
 
@@ -2240,6 +2261,8 @@ async def learn(request: Request, req: FeedbackRequest):
 
     update_global_counts()
     logger.info(f"AI learned from log {req.log_id}: {req.new_severity}")
+    record_audit(current_user.get('id'), current_user.get('username', 'unknown'), 'severity_change',
+                 'log', str(req.log_id), json.dumps({"new_severity": req.new_severity, "reason": req.reason}))
 
     return {
         "status": "success",
@@ -2249,7 +2272,7 @@ async def learn(request: Request, req: FeedbackRequest):
 
 @app.post("/api/learn-conditional")
 @limiter.limit("10/minute")
-async def learn_conditional(request: Request, req: ConditionalFeedbackRequest):
+async def learn_conditional(request: Request, req: ConditionalFeedbackRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
     """Learn from feedback with conditional rules (host-specific, time-limited, etc.)"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -2536,7 +2559,7 @@ async def get_processing_time_stats(request: Request):
 
 @app.delete("/api/conditional-rules/{rule_id}")
 @limiter.limit("10/minute")
-async def deactivate_conditional_rule(request: Request, rule_id: int):
+async def deactivate_conditional_rule(request: Request, rule_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
     """Deactivate a conditional severity rule."""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -2636,7 +2659,7 @@ async def get_knowledge_base(request: Request):
 
 @app.post("/api/chat")
 @limiter.limit("20/minute")
-async def chat_with_ai(request: Request, req: ChatRequest):
+async def chat_with_ai(request: Request, req: ChatRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
     try:
         ollama_client = Client(host=OLLAMA_URL)
 
@@ -2649,18 +2672,10 @@ async def chat_with_ai(request: Request, req: ChatRequest):
 
         log_context = "\n".join([f"- {log['raw_log'][:100]}" for log in recent_logs[:5]])
 
-        system_prompt = f"""You are an AI Security Operations Center (SOC) analyst assistant.
-You help analyze security logs, explain threats, and provide actionable recommendations.
-
-Recent logs context:
+        system_prompt = f"""SOC analyst assistant. Recent logs:
 {log_context}
-
-Current system stats:
-- Total logs: {TOTAL_LOGS_COUNT}
-- Pending: {PENDING_LOGS_COUNT}
-- Processed: {PROCESSED_LOGS_COUNT}
-
-Provide concise, actionable security advice. Be professional and helpful."""
+Stats: {TOTAL_LOGS_COUNT} total, {PENDING_LOGS_COUNT} pending, {PROCESSED_LOGS_COUNT} processed.
+Be concise and actionable."""
 
         response = ollama_client.chat(
             model=OLLAMA_MODEL,
@@ -2668,7 +2683,7 @@ Provide concise, actionable security advice. Be professional and helpful."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.query}
             ],
-            options={"temperature": 0.7}
+            options={"temperature": 0.7, "num_thread": 16, "num_ctx": 1024}
         )
 
         ai_response = response['message']['content']
@@ -2679,6 +2694,209 @@ Provide concise, actionable security advice. Be professional and helpful."""
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return {"response": f"Sorry, I encountered an error: {str(e)[:100]}"}
+
+@app.post("/api/action-chat")
+@limiter.limit("30/minute")
+async def action_chat(request: Request, req: ActionChatRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Action chatbot that can execute actions like changing severity via natural language.
+    """
+    try:
+        ollama_client = Client(host=OLLAMA_URL)
+
+        # Extract context
+        context = req.context
+        current_tab = context.get('current_tab', 'unknown')
+        log_id = context.get('log_id')
+        host = context.get('host', '')
+        severity = context.get('severity', '')
+        ip = context.get('ip', '')
+
+        # Intent detection using Ollama
+        intent_prompt = f"""Classify this message into ONE category: change_severity, create_incident, search_logs, question
+
+Message: "{req.message}"
+Log ID: {log_id}
+
+Reply with ONLY the category name."""
+
+        intent_response = ollama_client.chat(
+            model=OLLAMA_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a precise intent classifier. Respond with only the category name."},
+                {"role": "user", "content": intent_prompt}
+            ],
+            options={"temperature": 0.1, "num_thread": 16, "num_ctx": 512}
+        )
+
+        intent = intent_response['message']['content'].strip().lower()
+        logger.info(f"Action chat intent detected: {intent} for message: {req.message}")
+
+        action_executed = False
+        action_type = None
+        action_result = {}
+        response_text = ""
+
+        # Handle change_severity intent
+        if "change_severity" in intent or "severity" in intent.lower():
+            if not log_id:
+                response_text = "Please select a log first to change its severity. Open a log detail view and try again."
+            else:
+                # Extract the new severity from the message
+                severity_prompt = f"""What severity level? Reply with ONLY one of: Low, Medium, High, Critical
+
+Message: "{req.message}" """
+
+                severity_response = ollama_client.chat(
+                    model=OLLAMA_MODEL,
+                    messages=[
+                        {"role": "system", "content": "Extract severity level. Respond with only: Low, Medium, High, or Critical"},
+                        {"role": "user", "content": severity_prompt}
+                    ],
+                    options={"temperature": 0.1, "num_thread": 16, "num_ctx": 512}
+                )
+
+                new_severity = severity_response['message']['content'].strip()
+
+                if new_severity in ["Low", "Medium", "High", "Critical"]:
+                    # Create conditional rule
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+
+                        # Get log hash
+                        cursor.execute("SELECT pattern_hash FROM raw_logs WHERE id = ?", (log_id,))
+                        log_row = cursor.fetchone()
+
+                        if log_row:
+                            log_hash = log_row['pattern_hash']
+
+                            # Generate reason from user message
+                            reason = f"User adjusted via Action Chat: {req.message[:200]}"
+
+                            # Insert conditional rule
+                            cursor.execute("""
+                                INSERT INTO ai_knowledge_conditions
+                                (pattern_hash, original_severity, corrected_severity, reason,
+                                 host_filter, ip_filter, expires_at, exclude_hosts, is_active, times_applied)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                            """, (
+                                log_hash,
+                                severity,
+                                new_severity,
+                                reason,
+                                host if host else None,
+                                ip if ip else None,
+                                None,  # No expiration
+                                None,  # No exclusions
+                            ))
+
+                            rule_id = cursor.lastrowid
+                            conn.commit()
+
+                            action_executed = True
+                            action_type = "change_severity"
+                            action_result = {
+                                "rule_id": rule_id,
+                                "new_severity": new_severity,
+                                "log_id": log_id,
+                                "host": host
+                            }
+
+                            response_text = f"✅ Severity changed to {new_severity} for log #{log_id}."
+                            if host:
+                                response_text += f" This rule applies to host: {host}."
+                            response_text += " The AI will learn from this adjustment."
+                        else:
+                            response_text = f"Could not find log #{log_id} in the database."
+                else:
+                    response_text = f"I couldn't determine a valid severity level from your message. Please specify Low, Medium, High, or Critical."
+
+        # Handle create_incident intent
+        elif "create_incident" in intent or "incident" in intent.lower():
+            if not log_id:
+                response_text = "Please select a log first to create an incident. Open a log detail view and try again."
+            else:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+
+                    # Get log details
+                    cursor.execute("""
+                        SELECT id, host, event_type, severity, raw_log
+                        FROM raw_logs WHERE id = ?
+                    """, (log_id,))
+
+                    log_row = cursor.fetchone()
+
+                    if log_row:
+                        # Create incident
+                        title = f"Security Incident - {log_row['event_type']} on {log_row['host']}"
+                        description = f"Created from log #{log_id} via Action Chat\n\n{log_row['raw_log'][:500]}"
+
+                        cursor.execute("""
+                            INSERT INTO incidents (title, description, severity, status, log_id, assigned_to, created_at)
+                            VALUES (?, ?, ?, 'Open', ?, ?, ?)
+                        """, (
+                            title,
+                            description,
+                            log_row['severity'],
+                            log_id,
+                            current_user.get('username', 'SOC Analyst'),
+                            datetime.datetime.now().isoformat()
+                        ))
+
+                        incident_id = cursor.lastrowid
+                        conn.commit()
+
+                        action_executed = True
+                        action_type = "create_incident"
+                        action_result = {
+                            "incident_id": incident_id,
+                            "log_id": log_id
+                        }
+
+                        response_text = f"✅ Incident #{incident_id} created successfully from log #{log_id}. Title: {title}"
+                    else:
+                        response_text = f"Could not find log #{log_id} in the database."
+
+        # Handle search_logs intent
+        elif "search" in intent:
+            response_text = "To search logs, use the search filters in the Logs tab. You can filter by severity, host, event type, and more."
+
+        # Handle general questions
+        else:
+            # Use regular chat response
+            chat_prompt = f"""User: "{req.message}"
+Tab: {current_tab}, Log: #{log_id if log_id else 'None'}
+Answer briefly."""
+
+            general_response = ollama_client.chat(
+                model=OLLAMA_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a helpful SOC assistant."},
+                    {"role": "user", "content": chat_prompt}
+                ],
+                options={"temperature": 0.7, "num_thread": 16, "num_ctx": 1024}
+            )
+
+            response_text = general_response['message']['content']
+
+        logger.info(f"Action chat completed - User: {current_user['username']}, Intent: {intent}, Action executed: {action_executed}")
+
+        return {
+            "response_text": response_text,
+            "action_executed": action_executed,
+            "action_type": action_type,
+            "action_result": action_result
+        }
+
+    except Exception as e:
+        logger.error(f"Action chat error: {e}")
+        return {
+            "response_text": f"Sorry, I encountered an error: {str(e)[:100]}",
+            "action_executed": False,
+            "action_type": None,
+            "action_result": {}
+        }
 
 # ==============================================================================
 # 12b. NEW FEATURE API ENDPOINTS
@@ -3078,7 +3296,7 @@ async def export_logs(request: Request):
 
 @app.post("/api/create-incident")
 @limiter.limit("20/minute")
-async def create_incident(request: Request):
+async def create_incident(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
     """Create a new incident from an alert"""
     data = await request.json()
 
@@ -3114,6 +3332,8 @@ async def create_incident(request: Request):
         conn.commit()
 
     logger.info(f"Created incident {incident_id} for log {log_id}")
+    record_audit(current_user.get('id'), current_user.get('username', 'unknown'), 'create_incident',
+                 'incident', str(incident_id), json.dumps({"log_id": log_id, "title": title}))
 
     return {
         "status": "success",
@@ -3604,6 +3824,544 @@ async def update_incident_status(request: Request, incident_id: int, status: str
     return {"status": "success", "incident_id": incident_id, "new_status": status}
 
 # ==============================================================================
+# 12c. Professional Feature Endpoints
+# ==============================================================================
+
+# --- Audit Log ---
+@app.get("/api/audit-log")
+@limiter.limit("60/minute")
+async def get_audit_log(request: Request, action: str = None, username: str = None,
+                        date_from: str = None, date_to: str = None, limit: int = 100,
+                        current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get audit trail with optional filters"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        conditions = []
+        params = []
+        if action:
+            conditions.append("action = ?")
+            params.append(action)
+        if username:
+            conditions.append("username = ?")
+            params.append(username)
+        if date_from:
+            conditions.append("created_at >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("created_at <= ?")
+            params.append(date_to)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        cursor.execute(f"""
+            SELECT id, user_id, username, action, entity_type, entity_id, details, ip_address, created_at
+            FROM audit_log WHERE {where} ORDER BY created_at DESC LIMIT ?
+        """, params + [limit])
+        rows = cursor.fetchall()
+    return {"logs": [{
+        "id": r[0], "user_id": r[1], "username": r[2], "action": r[3],
+        "entity_type": r[4], "entity_id": r[5], "details": r[6],
+        "ip_address": r[7], "created_at": r[8]
+    } for r in rows]}
+
+# --- Role Management ---
+@app.put("/api/users/{user_id}/role")
+@limiter.limit("10/minute")
+async def update_user_role(request: Request, user_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Update user role (admin only)"""
+    if current_user.get('role') != 'admin' and not current_user.get('is_admin'):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    data = await request.json()
+    new_role = data.get('role')
+    if new_role not in ('admin', 'analyst', 'manager'):
+        raise HTTPException(status_code=400, detail="Invalid role. Must be admin, analyst, or manager")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        conn.commit()
+    record_audit(current_user.get('id'), current_user.get('username'), 'role_change',
+                 'user', str(user_id), json.dumps({"new_role": new_role}), get_remote_address(request))
+    return {"status": "success", "user_id": user_id, "new_role": new_role}
+
+# --- Alert Triage ---
+@app.get("/api/triage/queue")
+@limiter.limit("60/minute")
+async def get_triage_queue(request: Request, triage_status: str = None,
+                           current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get triage queue"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if triage_status:
+            cursor.execute("""
+                SELECT rl.id, rl.timestamp, rl.severity, rl.event_type, rl.host, rl.ai_summary,
+                       at.triage_status, at.assigned_to, at.notes, at.triaged_by, at.triaged_at
+                FROM raw_logs rl
+                LEFT JOIN alert_triage at ON rl.id = at.log_id
+                WHERE rl.status = 'PROCESSED' AND at.triage_status = ?
+                ORDER BY rl.timestamp DESC LIMIT 200
+            """, (triage_status,))
+        else:
+            cursor.execute("""
+                SELECT rl.id, rl.timestamp, rl.severity, rl.event_type, rl.host, rl.ai_summary,
+                       at.triage_status, at.assigned_to, at.notes, at.triaged_by, at.triaged_at
+                FROM raw_logs rl
+                LEFT JOIN alert_triage at ON rl.id = at.log_id
+                WHERE rl.status = 'PROCESSED'
+                AND (rl.severity IN ('High', 'Critical') OR at.triage_status IS NOT NULL)
+                ORDER BY CASE rl.severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+                         rl.timestamp DESC
+                LIMIT 200
+            """)
+        rows = cursor.fetchall()
+    return [{"log_id": r[0], "timestamp": r[1], "severity": r[2], "event_type": r[3],
+             "host": r[4], "summary": r[5], "triage_status": r[6] or "new",
+             "assigned_to": r[7], "notes": r[8], "triaged_by": r[9], "triaged_at": r[10]} for r in rows]
+
+@app.put("/api/triage/{log_id}")
+@limiter.limit("30/minute")
+async def update_triage(request: Request, log_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Update triage status for a single alert"""
+    data = await request.json()
+    triage_status = data.get('triage_status', 'acknowledged')
+    assigned_to = data.get('assigned_to')
+    notes = data.get('notes')
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO alert_triage (log_id, triage_status, assigned_to, notes, triaged_by, triaged_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(log_id) DO UPDATE SET
+                triage_status = excluded.triage_status,
+                assigned_to = COALESCE(excluded.assigned_to, alert_triage.assigned_to),
+                notes = COALESCE(excluded.notes, alert_triage.notes),
+                triaged_by = excluded.triaged_by,
+                triaged_at = excluded.triaged_at
+        """, (log_id, triage_status, assigned_to, notes, current_user.get('username')))
+        conn.commit()
+    record_audit(current_user.get('id'), current_user.get('username'), 'triage_update',
+                 'alert', str(log_id), json.dumps({"status": triage_status}), get_remote_address(request))
+    return {"status": "success", "log_id": log_id, "triage_status": triage_status}
+
+@app.post("/api/triage/bulk-action")
+@limiter.limit("20/minute")
+async def bulk_triage(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Bulk triage action on multiple alerts"""
+    data = await request.json()
+    log_ids = data.get('log_ids', [])
+    action = data.get('action', 'acknowledged')
+    assigned_to = data.get('assigned_to')
+    notes = data.get('notes')
+    if not log_ids:
+        raise HTTPException(status_code=400, detail="No log IDs provided")
+    if len(log_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 logs per bulk action")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for lid in log_ids:
+            cursor.execute("""
+                INSERT INTO alert_triage (log_id, triage_status, assigned_to, notes, triaged_by, triaged_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(log_id) DO UPDATE SET
+                    triage_status = excluded.triage_status,
+                    assigned_to = COALESCE(excluded.assigned_to, alert_triage.assigned_to),
+                    notes = COALESCE(excluded.notes, alert_triage.notes),
+                    triaged_by = excluded.triaged_by,
+                    triaged_at = excluded.triaged_at
+            """, (lid, action, assigned_to, notes, current_user.get('username')))
+        conn.commit()
+    record_audit(current_user.get('id'), current_user.get('username'), 'bulk_triage',
+                 'alert', ','.join(str(i) for i in log_ids[:10]), json.dumps({"action": action, "count": len(log_ids)}),
+                 get_remote_address(request))
+    return {"status": "success", "affected": len(log_ids), "action": action}
+
+@app.get("/api/triage/stats")
+@limiter.limit("60/minute")
+async def get_triage_stats(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get triage statistics"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT triage_status, COUNT(*) FROM alert_triage GROUP BY triage_status
+        """)
+        stats = {r[0]: r[1] for r in cursor.fetchall()}
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status='PROCESSED' AND severity IN ('High','Critical')")
+        total_high = cursor.fetchone()[0]
+    return {"stats": stats, "total_high_critical": total_high,
+            "triaged": sum(stats.values()), "untriaged": max(0, total_high - sum(stats.values()))}
+
+# --- Info Logs / Live Feed ---
+@app.get("/api/info-logs")
+@limiter.limit("120/minute")
+async def get_info_logs(request: Request, since_id: int = 0):
+    """Get recent info-level logs for live feed"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, timestamp, raw_log, host, ai_summary, severity
+            FROM raw_logs
+            WHERE id > ? AND status = 'PROCESSED'
+            ORDER BY id DESC LIMIT 50
+        """, (since_id,))
+        rows = cursor.fetchall()
+    return [{"id": r[0], "timestamp": r[1], "raw_log": r[2][:200] if r[2] else "",
+             "host": r[3] or "Unknown", "summary": r[4] or "", "severity": r[5] or "Info"} for r in rows]
+
+# --- Shift Notes ---
+@app.get("/api/shift-notes")
+@limiter.limit("60/minute")
+async def get_shift_notes(request: Request, date: str = None, shift: str = None,
+                          current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get shift handoff notes"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        conditions = []
+        params = []
+        if date:
+            conditions.append("shift_date = ?")
+            params.append(date)
+        if shift:
+            conditions.append("shift_period = ?")
+            params.append(shift)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        cursor.execute(f"""
+            SELECT id, author, shift_date, shift_period, title, content, priority,
+                   acknowledged_by, created_at, updated_at
+            FROM shift_notes WHERE {where} ORDER BY created_at DESC LIMIT 50
+        """, params)
+        rows = cursor.fetchall()
+    return [{"id": r[0], "author": r[1], "shift_date": r[2], "shift_period": r[3],
+             "title": r[4], "content": r[5], "priority": r[6], "acknowledged_by": r[7],
+             "created_at": r[8], "updated_at": r[9]} for r in rows]
+
+@app.post("/api/shift-notes")
+@limiter.limit("20/minute")
+async def create_shift_note(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Create a new shift note"""
+    data = await request.json()
+    title = data.get('title', '').strip()
+    content = data.get('content', '').strip()
+    priority = data.get('priority', 'normal')
+    shift_period = data.get('shift_period', 'day')
+    shift_date = data.get('shift_date', datetime.date.today().isoformat())
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Title and content are required")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO shift_notes (author, shift_date, shift_period, title, content, priority)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (current_user.get('username'), shift_date, shift_period, title, content, priority))
+        note_id = cursor.lastrowid
+        conn.commit()
+    record_audit(current_user.get('id'), current_user.get('username'), 'create_shift_note',
+                 'shift_note', str(note_id), None, get_remote_address(request))
+    return {"status": "success", "id": note_id}
+
+@app.put("/api/shift-notes/{note_id}")
+@limiter.limit("20/minute")
+async def update_shift_note(request: Request, note_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Update a shift note"""
+    data = await request.json()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT author FROM shift_notes WHERE id = ?", (note_id,))
+        note = cursor.fetchone()
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+        updates = []
+        params = []
+        for field in ('title', 'content', 'priority', 'shift_period'):
+            if field in data:
+                updates.append(f"{field} = ?")
+                params.append(data[field])
+        if updates:
+            updates.append("updated_at = datetime('now')")
+            params.append(note_id)
+            cursor.execute(f"UPDATE shift_notes SET {', '.join(updates)} WHERE id = ?", params)
+            conn.commit()
+    return {"status": "success", "id": note_id}
+
+@app.delete("/api/shift-notes/{note_id}")
+@limiter.limit("20/minute")
+async def delete_shift_note(request: Request, note_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Delete a shift note"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM shift_notes WHERE id = ?", (note_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Note not found")
+        conn.commit()
+    return {"status": "success"}
+
+@app.post("/api/shift-notes/{note_id}/acknowledge")
+@limiter.limit("30/minute")
+async def acknowledge_shift_note(request: Request, note_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Acknowledge a shift note"""
+    username = current_user.get('username')
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT acknowledged_by FROM shift_notes WHERE id = ?", (note_id,))
+        note = cursor.fetchone()
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+        existing = note[0] or ""
+        if username not in existing:
+            new_ack = f"{existing},{username}" if existing else username
+            cursor.execute("UPDATE shift_notes SET acknowledged_by = ? WHERE id = ?", (new_ack, note_id))
+            conn.commit()
+    return {"status": "success", "acknowledged_by": username}
+
+# --- Export Report ---
+@app.post("/api/export/report")
+@limiter.limit("5/minute")
+async def export_report(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Generate HTML report for threats, compliance, or incidents"""
+    from fastapi.responses import HTMLResponse as HTMLResp
+    data = await request.json()
+    report_type = data.get('type', 'threat')
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Gather data based on report type
+        cursor.execute("""
+            SELECT severity, COUNT(*) FROM raw_logs
+            WHERE status='PROCESSED' AND datetime(timestamp) > datetime('now', '-30 days')
+            GROUP BY severity
+        """)
+        sev_counts = {r[0]: r[1] for r in cursor.fetchall()}
+        cursor.execute("""
+            SELECT COUNT(*) FROM raw_logs WHERE status='PROCESSED'
+            AND datetime(timestamp) > datetime('now', '-30 days')
+        """)
+        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM incidents WHERE status = 'Open'")
+        open_incidents = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM incidents")
+        total_incidents = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT event_type, COUNT(*) FROM raw_logs
+            WHERE status='PROCESSED' AND datetime(timestamp) > datetime('now', '-30 days')
+            GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 10
+        """)
+        top_events = [(r[0], r[1]) for r in cursor.fetchall()]
+
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    crit = sev_counts.get('Critical', 0)
+    high = sev_counts.get('High', 0)
+    med = sev_counts.get('Medium', 0)
+    low = sev_counts.get('Low', 0)
+    score = max(0, 100 - (crit * 10 + high * 5))
+
+    events_html = "".join(f"<tr><td>{e[0]}</td><td>{e[1]}</td></tr>" for e in top_events)
+    title_map = {"threat": "Threat Summary Report", "compliance": "Compliance Report", "incident": "Incident Report"}
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>{title_map.get(report_type, 'SOC Report')}</title>
+    <style>body{{font-family:Arial,sans-serif;margin:40px;color:#1e293b}}h1{{color:#1e40af}}
+    table{{border-collapse:collapse;width:100%;margin:20px 0}}th,td{{border:1px solid #cbd5e1;padding:8px;text-align:left}}
+    th{{background:#1e40af;color:white}}.metric{{display:inline-block;margin:10px 20px 10px 0;padding:15px;
+    background:#f1f5f9;border-radius:8px;min-width:120px;text-align:center}}.metric .val{{font-size:2em;font-weight:bold;
+    color:#1e40af}}.metric .lbl{{font-size:0.85em;color:#64748b}}
+    @media print{{body{{margin:20px}}}}</style></head><body>
+    <h1>{title_map.get(report_type, 'SOC Report')}</h1>
+    <p>Generated: {now} | By: {current_user.get('username')} | Period: Last 30 Days</p>
+    <div class="metric"><div class="val">{total}</div><div class="lbl">Total Events</div></div>
+    <div class="metric"><div class="val" style="color:#dc2626">{crit}</div><div class="lbl">Critical</div></div>
+    <div class="metric"><div class="val" style="color:#ef4444">{high}</div><div class="lbl">High</div></div>
+    <div class="metric"><div class="val" style="color:#f59e0b">{med}</div><div class="lbl">Medium</div></div>
+    <div class="metric"><div class="val" style="color:#22c55e">{low}</div><div class="lbl">Low</div></div>
+    <div class="metric"><div class="val">{score}%</div><div class="lbl">Compliance Score</div></div>
+    <div class="metric"><div class="val">{open_incidents}</div><div class="lbl">Open Incidents</div></div>
+    <div class="metric"><div class="val">{total_incidents}</div><div class="lbl">Total Incidents</div></div>
+    <h2>Top Event Types</h2><table><tr><th>Event Type</th><th>Count</th></tr>{events_html}</table>
+    <script>window.onload=function(){{if(window.location.search.includes('print=1'))window.print()}}</script>
+    </body></html>"""
+    record_audit(current_user.get('id'), current_user.get('username'), 'export_report',
+                 'report', report_type, None, get_remote_address(request))
+    return HTMLResp(content=html)
+
+# --- SLA Config ---
+@app.get("/api/sla-config")
+@limiter.limit("60/minute")
+async def get_sla_config(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get SLA configuration"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT severity, response_minutes FROM sla_config ORDER BY response_minutes")
+        rows = cursor.fetchall()
+    return {r[0]: r[1] for r in rows}
+
+@app.put("/api/sla-config/{severity}")
+@limiter.limit("10/minute")
+async def update_sla_config(request: Request, severity: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Update SLA threshold (admin only)"""
+    if current_user.get('role') != 'admin' and not current_user.get('is_admin'):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    data = await request.json()
+    minutes = data.get('response_minutes')
+    if not isinstance(minutes, int) or minutes < 1:
+        raise HTTPException(status_code=400, detail="response_minutes must be a positive integer")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE sla_config SET response_minutes = ?, updated_at = datetime('now') WHERE severity = ?",
+                       (minutes, severity))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Severity not found")
+        conn.commit()
+    record_audit(current_user.get('id'), current_user.get('username'), 'update_sla',
+                 'sla', severity, json.dumps({"minutes": minutes}), get_remote_address(request))
+    return {"status": "success", "severity": severity, "response_minutes": minutes}
+
+# --- Correlation Timeline ---
+@app.get("/api/correlation-timeline/{host}")
+@limiter.limit("30/minute")
+async def get_correlation_timeline(request: Request, host: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get attack progression timeline for a host with MITRE kill-chain mapping"""
+    mitre_order = ["Reconnaissance", "Resource Development", "Initial Access", "Execution",
+                   "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access",
+                   "Discovery", "Lateral Movement", "Collection", "Command and Control",
+                   "Exfiltration", "Impact", "Unknown"]
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT rl.id, rl.timestamp, rl.severity, rl.event_type, rl.ai_summary,
+                   ae.mitre_attack_tactic, ae.mitre_attack_technique, ae.threat_score
+            FROM raw_logs rl
+            LEFT JOIN alert_enrichment ae ON rl.id = ae.log_id
+            WHERE rl.host = ? AND rl.status = 'PROCESSED'
+            ORDER BY rl.timestamp ASC LIMIT 100
+        """, (host,))
+        rows = cursor.fetchall()
+    events = []
+    for r in rows:
+        tactic = r[5] or "Unknown"
+        events.append({
+            "id": r[0], "timestamp": r[1], "severity": r[2], "event_type": r[3],
+            "summary": r[4], "mitre_tactic": tactic, "mitre_technique": r[6] or "Unknown",
+            "threat_score": r[7] or 0,
+            "stage_index": mitre_order.index(tactic) if tactic in mitre_order else len(mitre_order) - 1
+        })
+    return {"host": host, "events": events, "stages": mitre_order}
+
+# --- Geo IP Data ---
+@app.get("/api/geo-data")
+@limiter.limit("30/minute")
+async def get_geo_data(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get geo-IP data aggregated from alert enrichment"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT geo_country, geo_city, COUNT(*) as cnt, AVG(threat_score) as avg_score
+            FROM alert_enrichment
+            WHERE geo_country IS NOT NULL AND geo_country != ''
+            GROUP BY geo_country, geo_city
+            ORDER BY cnt DESC LIMIT 100
+        """)
+        geo_rows = cursor.fetchall()
+        cursor.execute("""
+            SELECT source_ip, geo_country, geo_city, COUNT(*) as cnt
+            FROM alert_enrichment
+            WHERE source_ip IS NOT NULL AND source_ip != ''
+            GROUP BY source_ip
+            ORDER BY cnt DESC LIMIT 50
+        """)
+        ip_rows = cursor.fetchall()
+    # Country coordinate approximations for map markers
+    country_coords = {
+        "United States": [39.8, -98.5], "China": [35.8, 104.1], "Russia": [61.5, 105.3],
+        "Germany": [51.1, 10.4], "United Kingdom": [55.3, -3.4], "France": [46.2, 2.2],
+        "Japan": [36.2, 138.2], "India": [20.5, 78.9], "Brazil": [-14.2, -51.9],
+        "Australia": [-25.2, 133.7], "Canada": [56.1, -106.3], "Netherlands": [52.1, 5.2],
+        "South Korea": [35.9, 127.7], "Iran": [32.4, 53.6], "North Korea": [40.3, 127.5],
+        "Ukraine": [48.3, 31.1], "Romania": [45.9, 24.9], "Vietnam": [14.0, 108.2],
+        "Indonesia": [-0.7, 113.9], "Turkey": [38.9, 35.2], "Unknown": [0, 0]
+    }
+    countries = []
+    for r in geo_rows:
+        country = r[0] or "Unknown"
+        coords = country_coords.get(country, [0, 0])
+        countries.append({"country": country, "city": r[1], "count": r[2],
+                         "avg_score": round(r[3] or 0), "lat": coords[0], "lon": coords[1]})
+    ips = [{"ip": r[0], "country": r[1], "city": r[2], "count": r[3]} for r in ip_rows]
+    return {"countries": countries, "ips": ips}
+
+# --- Datasource Health ---
+@app.get("/api/datasource-health")
+@limiter.limit("60/minute")
+async def get_datasource_health(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get health status of all data sources"""
+    sources = []
+    # Elasticsearch
+    es_start = time.time()
+    es_ok = check_opensearch_health()
+    es_latency = int((time.time() - es_start) * 1000)
+    sources.append({"name": "Elasticsearch", "status": "online" if es_ok else "offline",
+                    "latency_ms": es_latency, "icon": "ES"})
+    # Ollama
+    ol_start = time.time()
+    ol_ok = check_ollama_health()
+    ol_latency = int((time.time() - ol_start) * 1000)
+    sources.append({"name": "Ollama LLM", "status": "online" if ol_ok else "offline",
+                    "latency_ms": ol_latency, "icon": "AI"})
+    # Syslog Listener
+    sources.append({"name": "Syslog Listener", "status": "online" if INGESTOR_RUNNING.is_set() else "offline",
+                    "latency_ms": 0, "icon": "SL"})
+    # SQLite
+    db_start = time.time()
+    db_ok = check_db_health()
+    db_latency = int((time.time() - db_start) * 1000)
+    sources.append({"name": "SQLite Database", "status": "online" if db_ok else "offline",
+                    "latency_ms": db_latency, "icon": "DB"})
+    return {"sources": sources}
+
+# --- Saved Searches ---
+@app.get("/api/saved-searches")
+@limiter.limit("60/minute")
+async def get_saved_searches(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get saved searches for current user"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, name, filters, is_shared, created_at
+            FROM saved_searches
+            WHERE user_id = ? OR is_shared = 1
+            ORDER BY created_at DESC
+        """, (current_user.get('id'),))
+        rows = cursor.fetchall()
+    return [{"id": r[0], "user_id": r[1], "name": r[2], "filters": json.loads(r[3]) if r[3] else {},
+             "is_shared": bool(r[4]), "created_at": r[5]} for r in rows]
+
+@app.post("/api/saved-searches")
+@limiter.limit("20/minute")
+async def create_saved_search(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Save a search preset"""
+    data = await request.json()
+    name = data.get('name', '').strip()
+    filters = data.get('filters', {})
+    is_shared = data.get('is_shared', False)
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO saved_searches (user_id, name, filters, is_shared)
+            VALUES (?, ?, ?, ?)
+        """, (current_user.get('id'), name, json.dumps(filters), 1 if is_shared else 0))
+        search_id = cursor.lastrowid
+        conn.commit()
+    return {"status": "success", "id": search_id}
+
+@app.delete("/api/saved-searches/{search_id}")
+@limiter.limit("20/minute")
+async def delete_saved_search(request: Request, search_id: int, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Delete a saved search"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM saved_searches WHERE id = ? AND user_id = ?",
+                       (search_id, current_user.get('id')))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Saved search not found or access denied")
+        conn.commit()
+    return {"status": "success"}
+
+# ==============================================================================
 # 13. Graceful Shutdown
 # ==============================================================================
 def signal_handler(sig, frame):
@@ -3621,16 +4379,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ==============================================================================
 if __name__ == "__main__":
     try:
-        logger.info("=" * 60)
-        logger.info("Starting AXS ICT Hybrid SOC Agent v3.0.0")
-        logger.info("=" * 60)
-
-        # Log configuration
-        logger.info(f"Authentication: {'ENABLED' if AUTH_ENABLED else 'DISABLED'}")
-        logger.info(f"CORS Origins: {'ALL' if CORS_ALLOW_ALL else CORS_ORIGINS}")
-        logger.info(f"Data Retention: {RETENTION_DAYS} days ({'ENABLED' if RETENTION_ENABLED else 'DISABLED'})")
-        logger.info(f"Alerting: {'ENABLED' if ALERTING_ENABLED else 'DISABLED'}")
-        logger.info(f"Batch Size: {BATCH_SIZE}, Sleep When Empty: {SLEEP_WHEN_EMPTY}s")
+        logger.info("Starting AXS ICT Hybrid SOC Agent v2.0.0")
 
         validate_config()
         init_db()
@@ -3648,22 +4397,13 @@ if __name__ == "__main__":
         threading.Thread(target=tcp_ingestor_thread, daemon=True, name="Ingestor").start()
         threading.Thread(target=processor_loop, daemon=True, name="Processor").start()
 
-        # Start data retention worker if enabled
-        if RETENTION_ENABLED:
-            threading.Thread(target=retention_worker, daemon=True, name="Retention").start()
-            logger.info("Data retention worker started")
-
         # Wait a moment for threads to start
         time.sleep(1)
         logger.info("Background threads started successfully")
 
         update_global_counts()
-        update_prometheus_metrics()
 
         logger.info(f"Starting API server on {HOST_IP}:{API_PORT}")
-        logger.info(f"Prometheus metrics available at http://{HOST_IP}:{API_PORT}/metrics")
-        logger.info(f"Dashboard available at http://{HOST_IP}:{API_PORT}/")
-        logger.info("=" * 60)
 
         uvicorn.run(
             app,
