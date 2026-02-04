@@ -206,35 +206,35 @@
         .charts-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 6px;
-            margin-bottom: 6px;
+            gap: 5px;
+            margin-bottom: 5px;
             flex-shrink: 0;
         }
 
         .chart-container {
             background-color: var(--secondary-bg);
             border-radius: 4px;
-            padding: 6px;
+            padding: 5px;
             border: 1px solid var(--border-color);
-            height: 130px;
+            height: 115px;
         }
 
         .chart-container canvas {
-            max-height: 100px !important;
+            max-height: 90px !important;
         }
 
         .chart-title {
-            font-size: 0.75em;
+            font-size: 0.72em;
             font-weight: bold;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
             color: var(--active-color);
         }
 
         /* Table Styles */
         .data-table {
             background-color: var(--secondary-bg);
-            border-radius: 6px;
-            padding: 8px;
+            border-radius: 5px;
+            padding: 6px;
             border: 1px solid var(--border-color);
             overflow: hidden;
             flex: 1;
@@ -253,24 +253,24 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
         }
 
         .table-title {
-            font-size: 0.9em;
+            font-size: 0.85em;
             font-weight: bold;
             color: var(--active-color);
         }
 
         .btn {
-            padding: 5px 10px;
+            padding: 4px 8px;
             background: var(--active-color);
             color: var(--primary-bg);
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
-            font-size: 0.8em;
+            font-size: 0.75em;
             transition: all 0.2s;
         }
 
@@ -286,19 +286,19 @@
         table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85em;
+            font-size: 0.8em;
         }
 
         th {
             background-color: var(--border-color);
             color: var(--active-color);
-            padding: 6px 8px;
+            padding: 5px 6px;
             text-align: left;
             font-weight: 600;
         }
 
         td {
-            padding: 5px 8px;
+            padding: 4px 6px;
             border-bottom: 1px solid var(--border-color);
         }
 
@@ -309,16 +309,16 @@
         /* Badge Styles */
         .badge {
             display: inline-block;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 0.75em;
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 0.7em;
             font-weight: bold;
         }
 
         .badge-critical { background: var(--critical-severity); color: white; }
         .badge-high { background: var(--high-severity); color: white; }
         .badge-medium { background: var(--medium-severity); color: var(--primary-bg); }
-        .badge-low { background: var(--low-severity); color: white; }
+        .badge-low { background: var(--low-severity); color: var(--primary-bg); }
 
         /* Modal Styles */
         .modal {
@@ -342,9 +342,9 @@
         .modal-content {
             background: var(--secondary-bg);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 15px;
-            max-width: 1000px;
+            border-radius: 6px;
+            padding: 12px;
+            max-width: 900px;
             width: 95%;
             max-height: 90vh;
             overflow-y: auto;
@@ -355,13 +355,13 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 12px;
-            padding-bottom: 8px;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .modal-title {
-            font-size: 1.1em;
+            font-size: 1em;
             color: var(--active-color);
             font-weight: bold;
         }
@@ -380,35 +380,35 @@
 
         .enrichment-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
+            margin: 10px 0;
         }
 
         .enrichment-card {
             background: var(--primary-bg);
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid var(--active-color);
+            padding: 8px 10px;
+            border-radius: 6px;
+            border-left: 3px solid var(--active-color);
         }
 
         .enrichment-label {
-            font-size: 0.85em;
+            font-size: 0.72em;
             opacity: 0.7;
-            margin-bottom: 5px;
+            margin-bottom: 2px;
         }
 
         .enrichment-value {
-            font-size: 1.2em;
+            font-size: 0.95em;
             font-weight: bold;
             color: var(--active-color);
         }
 
         .threat-score {
-            font-size: 3em;
+            font-size: 2.2em;
             font-weight: bold;
             text-align: center;
-            margin: 20px 0;
+            margin: 12px 0;
         }
 
         .threat-score.high { color: var(--high-severity); }
@@ -418,8 +418,8 @@
         /* Loading Spinner */
         .loading {
             text-align: center;
-            padding: 20px;
-            font-size: 0.9em;
+            padding: 12px;
+            font-size: 0.85em;
             color: var(--active-color);
         }
 
@@ -1447,18 +1447,23 @@
         .triage-count { font-size:0.8em; font-weight:bold; color:var(--active-color); }
         .triage-checkbox { width:16px; height:16px; cursor:pointer; accent-color:var(--active-color); }
 
-        /* Live Log Feed Panel */
-        .live-feed-panel { position:fixed; bottom:20px; left:20px; width:380px; height:320px; background:var(--secondary-bg);
-            border:1px solid var(--border-color); border-radius:10px; z-index:997; display:none; flex-direction:column;
-            box-shadow:0 8px 24px rgba(15,23,42,0.6); }
-        .live-feed-panel.active { display:flex; }
-        .live-feed-header { padding:8px 12px; background:var(--active-color); color:var(--primary-bg); border-radius:9px 9px 0 0;
-            font-weight:bold; display:flex; justify-content:space-between; align-items:center; font-size:0.85em; }
-        .live-feed-body { flex:1; overflow-y:auto; padding:6px; font-size:0.75em; font-family:monospace; }
-        .live-feed-entry { padding:3px 6px; border-bottom:1px solid var(--border-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .live-feed-toggle { position:fixed; bottom:20px; left:20px; width:44px; height:44px; background:var(--active-color);
-            border-radius:50%; border:none; cursor:pointer; font-size:20px; display:flex; align-items:center; justify-content:center;
-            box-shadow:0 4px 12px rgba(15,23,42,0.5); z-index:996; transition:all 0.3s; }
+        /* Live Log Feed Sidebar - Permanent Right Panel */
+        .live-feed-sidebar { position:fixed; top:0; right:0; width:280px; height:100vh; background:var(--secondary-bg);
+            border-left:1px solid var(--border-color); z-index:100; display:flex; flex-direction:column;
+            box-shadow:-4px 0 16px rgba(15,23,42,0.3); }
+        .live-feed-header { padding:6px 10px; background:var(--active-color); color:var(--primary-bg);
+            font-weight:bold; display:flex; justify-content:space-between; align-items:center; font-size:0.78em; flex-shrink:0; }
+        .live-feed-body { flex:1; overflow-y:auto; padding:4px; font-size:0.7em; font-family:monospace; min-height:0; }
+        .live-feed-entry { padding:3px 5px; border-bottom:1px solid var(--border-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+        .live-feed-entry:hover { background:rgba(96,165,250,0.1); }
+        .live-feed-entry.critical { border-left:2px solid var(--critical-severity); }
+        .live-feed-entry.high { border-left:2px solid var(--high-severity); }
+        .live-feed-entry.medium { border-left:2px solid var(--medium-severity); }
+        .live-feed-entry.low { border-left:2px solid var(--low-severity); }
+        .live-feed-toggle { display:none; }
+
+        /* Adjust body to account for sidebar */
+        body { padding-right:280px; }
 
         /* Shift Notes */
         .shift-note-card { background:var(--primary-bg); border-radius:8px; padding:12px; margin-bottom:8px;
@@ -2324,12 +2329,11 @@
         <div class="geo-stats-sidebar" id="geo-stats-sidebar"></div>
     </div>
 
-    <!-- Live Feed Panel (floating) -->
-    <button class="live-feed-toggle" id="live-feed-toggle" onclick="toggleLiveFeed()" title="Live Log Feed">📡</button>
-    <div class="live-feed-panel" id="live-feed-panel">
+    <!-- Live Feed Sidebar (permanent right panel) -->
+    <div class="live-feed-sidebar" id="live-feed-panel">
         <div class="live-feed-header">
             <span>📡 Live Log Feed</span>
-            <span style="cursor:pointer;" onclick="toggleLiveFeed()">×</span>
+            <span id="live-feed-count" style="font-size:0.9em;opacity:0.8;">0 events</span>
         </div>
         <div class="live-feed-body" id="live-feed-body"></div>
     </div>
@@ -2349,7 +2353,7 @@
                 <div class="shortcut-item"><span class="shortcut-key">A</span> Acknowledge selected</div>
                 <div class="shortcut-item"><span class="shortcut-key">I</span> Create incident</div>
                 <div class="shortcut-item"><span class="shortcut-key">R</span> Refresh data</div>
-                <div class="shortcut-item"><span class="shortcut-key">L</span> Toggle live feed</div>
+                <div class="shortcut-item"><span class="shortcut-key">L</span> Clear live feed</div>
                 <div class="shortcut-item"><span class="shortcut-key">/</span> Focus search</div>
                 <div class="shortcut-item"><span class="shortcut-key">?</span> Show this help</div>
             </div>
@@ -2673,6 +2677,7 @@
             loadData();
             loadSystemMetrics();
             loadNotifications();
+            startLiveFeed();  // Start permanent live feed sidebar
 
             // Auto-refresh intervals
             setInterval(loadData, 15000);           // Dashboard data every 15s
@@ -4829,43 +4834,52 @@
             } catch (e) { console.error('Bulk triage error:', e); }
         }
 
-        // --- Live Log Feed ---
+        // --- Live Log Feed (Permanent Sidebar) ---
         let liveFeedInterval = null;
         let lastFeedId = 0;
-        function toggleLiveFeed() {
-            const panel = document.getElementById('live-feed-panel');
-            const toggle = document.getElementById('live-feed-toggle');
-            if (panel.classList.contains('active')) {
-                panel.classList.remove('active');
-                toggle.style.display = 'flex';
-                if (liveFeedInterval) { clearInterval(liveFeedInterval); liveFeedInterval = null; }
-            } else {
-                panel.classList.add('active');
-                toggle.style.display = 'none';
-                loadLiveFeed();
-                liveFeedInterval = setInterval(loadLiveFeed, 2000);
-            }
+        let liveFeedTotal = 0;
+
+        function startLiveFeed() {
+            loadLiveFeed();
+            liveFeedInterval = setInterval(loadLiveFeed, 2000);
         }
+
         async function loadLiveFeed() {
             try {
                 const res = await fetch(`${API_BASE}/info-logs?since_id=${lastFeedId}`);
                 const data = await res.json();
                 if (data.length > 0) {
                     lastFeedId = Math.max(...data.map(d => d.id));
+                    liveFeedTotal += data.length;
                     const body = document.getElementById('live-feed-body');
+                    const countEl = document.getElementById('live-feed-count');
                     data.reverse().forEach(entry => {
                         const div = document.createElement('div');
-                        div.className = 'live-feed-entry';
-                        const sevColor = entry.severity === 'Critical' ? '#dc2626' : entry.severity === 'High' ? '#ef4444' :
-                            entry.severity === 'Medium' ? '#f59e0b' : entry.severity === 'Info' ? '#6ee7b7' : '#94a3b8';
-                        div.innerHTML = `<span style="color:${sevColor};font-weight:bold;">[${entry.severity}]</span> ${entry.host} - ${entry.raw_log}`;
-                        body.appendChild(div);
+                        const sevClass = entry.severity ? entry.severity.toLowerCase() : '';
+                        div.className = `live-feed-entry ${sevClass}`;
+                        div.onclick = () => openLogById(entry.id);
+                        const time = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+                        div.innerHTML = `<span style="opacity:0.6;">${time}</span> <b>[${entry.severity || 'Info'}]</b> ${entry.host || ''} ${(entry.raw_log || '').substring(0, 80)}`;
+                        body.insertBefore(div, body.firstChild);
                     });
-                    body.scrollTop = body.scrollHeight;
-                    // Trim old entries
-                    while (body.children.length > 200) body.removeChild(body.firstChild);
+                    // Update count
+                    if (countEl) countEl.textContent = `${body.children.length} events`;
+                    // Trim old entries (keep max 150)
+                    while (body.children.length > 150) body.removeChild(body.lastChild);
                 }
             } catch (e) { /* silent */ }
+        }
+
+        async function openLogById(logId) {
+            if (logId) await showLogDetails(logId);
+        }
+
+        function clearLiveFeed() {
+            const body = document.getElementById('live-feed-body');
+            const countEl = document.getElementById('live-feed-count');
+            if (body) body.innerHTML = '';
+            if (countEl) countEl.textContent = '0 events';
+            showToast('Live feed cleared', 'info');
         }
 
         // --- Shift Notes ---
@@ -5017,7 +5031,7 @@
                     break;
                 case 'l':
                     e.preventDefault();
-                    toggleLiveFeed();
+                    clearLiveFeed();
                     break;
                 case '/':
                     e.preventDefault();
