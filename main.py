@@ -15,9 +15,20 @@ import sys
 import logging
 import psutil
 import asyncio
+from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
+from urllib.parse import urlparse
+
+# PostgreSQL support
+try:
+    import psycopg2
+    import psycopg2.extras
+    from psycopg2 import pool
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
 from ollama import Client
 from elasticsearch import Elasticsearch
 from fastapi import FastAPI, HTTPException, Request
@@ -34,13 +45,22 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Depends, status
 
 # ==============================================================================
-# 1. Logging Configuration
+# 1. Logging Configuration with Rotation
 # ==============================================================================
+LOG_FILE = os.getenv("LOG_FILE", "soc_agent.log")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", "10485760"))  # 10MB default
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('soc_agent.log'),
+        RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT
+        ),
         logging.StreamHandler()
     ]
 )
@@ -55,22 +75,79 @@ ES_HOSTS = os.getenv("ES_HOSTS", 'http://localhost:9200')
 ES_INDEX = os.getenv("ES_INDEX", 'ai-analyzed-logs')
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral:7b")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-DB_NAME = os.getenv("DB_NAME", 'ai_agent_logs.db')
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "5046"))
 HOST_IP = os.getenv("HOST_IP", '0.0.0.0')
 API_PORT = int(os.getenv("API_PORT", "8000"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
+# Database Configuration - PostgreSQL or SQLite
+DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL connection string
+DB_NAME = os.getenv("DB_NAME", 'ai_agent_logs.db')  # SQLite fallback
+
+# Determine database type
+if DATABASE_URL and POSTGRES_AVAILABLE:
+    DB_TYPE = "postgresql"
+    # Parse DATABASE_URL for connection pool
+    parsed = urlparse(DATABASE_URL)
+    DB_CONFIG = {
+        "host": parsed.hostname,
+        "port": parsed.port or 5432,
+        "database": parsed.path.lstrip('/'),
+        "user": parsed.username,
+        "password": parsed.password
+    }
+    # Create connection pool
+    DB_POOL = pool.ThreadedConnectionPool(
+        minconn=2,
+        maxconn=20,
+        **DB_CONFIG
+    )
+    logger.info(f"Using PostgreSQL database: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}")
+elif DATABASE_URL and not POSTGRES_AVAILABLE:
+    logger.warning("DATABASE_URL provided but psycopg2 not installed. Falling back to SQLite.")
+    DB_TYPE = "sqlite"
+    DB_POOL = None
+else:
+    DB_TYPE = "sqlite"
+    DB_POOL = None
+    logger.info(f"Using SQLite database: {DB_NAME}")
+
 # Authentication Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-MIN-32-CHARS")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY or JWT_SECRET_KEY == "CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-MIN-32-CHARS":
+    raise ValueError("CRITICAL: JWT_SECRET_KEY environment variable must be set with a secure random key. "
+                     "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"")
+if len(JWT_SECRET_KEY) < 32:
+    raise ValueError("CRITICAL: JWT_SECRET_KEY must be at least 32 characters long")
+
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 
+# CORS Configuration
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
+CORS_ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
+
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+
+# Password Policy Configuration
+PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
+PASSWORD_REQUIRE_UPPERCASE = os.getenv("PASSWORD_REQUIRE_UPPERCASE", "true").lower() == "true"
+PASSWORD_REQUIRE_LOWERCASE = os.getenv("PASSWORD_REQUIRE_LOWERCASE", "true").lower() == "true"
+PASSWORD_REQUIRE_DIGIT = os.getenv("PASSWORD_REQUIRE_DIGIT", "true").lower() == "true"
+PASSWORD_REQUIRE_SPECIAL = os.getenv("PASSWORD_REQUIRE_SPECIAL", "true").lower() == "true"
+PASSWORD_EXPIRY_DAYS = int(os.getenv("PASSWORD_EXPIRY_DAYS", "90"))
+
+# Account Lockout Configuration
+ACCOUNT_LOCKOUT_THRESHOLD = int(os.getenv("ACCOUNT_LOCKOUT_THRESHOLD", "5"))
+ACCOUNT_LOCKOUT_DURATION_MINUTES = int(os.getenv("ACCOUNT_LOCKOUT_DURATION_MINUTES", "30"))
+
+# Session Management Configuration
+MAX_CONCURRENT_SESSIONS = int(os.getenv("MAX_CONCURRENT_SESSIONS", "5"))
+SESSION_INACTIVITY_TIMEOUT_MINUTES = int(os.getenv("SESSION_INACTIVITY_TIMEOUT_MINUTES", "60"))
 
 INGESTOR_RUNNING = threading.Event()
 INGESTOR_RUNNING.set()
@@ -99,12 +176,23 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS Middleware - Restrict in production!
+if CORS_ALLOW_ALL:
+    logger.warning("SECURITY WARNING: CORS is set to allow all origins. This should only be used in development!")
+    cors_origins = ["*"]
+elif CORS_ORIGINS:
+    cors_origins = [origin.strip() for origin in CORS_ORIGINS if origin.strip()]
+    logger.info(f"CORS restricted to origins: {cors_origins}")
+else:
+    cors_origins = ["http://localhost:8080", "http://127.0.0.1:8080"]
+    logger.info("CORS using default localhost origins")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 # ==============================================================================
@@ -148,27 +236,149 @@ def validate_config():
 # ==============================================================================
 # 5. Database Management
 # ==============================================================================
+
+class DatabaseConnection:
+    """Unified database connection wrapper for SQLite and PostgreSQL"""
+    def __init__(self, conn, db_type):
+        self.conn = conn
+        self.db_type = db_type
+
+    def cursor(self):
+        if self.db_type == "postgresql":
+            return self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        return self.conn.cursor()
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_NAME, timeout=10, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
+    """Get database connection - PostgreSQL or SQLite"""
+    if DB_TYPE == "postgresql" and DB_POOL:
+        conn = DB_POOL.getconn()
+        try:
+            yield DatabaseConnection(conn, "postgresql")
+        finally:
+            DB_POOL.putconn(conn)
+    else:
+        conn = sqlite3.connect(DB_NAME, timeout=10, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield DatabaseConnection(conn, "sqlite")
+        finally:
+            conn.close()
+
+def sql_param(index: int = None) -> str:
+    """Return the correct parameter placeholder for the current database type"""
+    if DB_TYPE == "postgresql":
+        return "%s"
+    return "?"
+
+def sql_now() -> str:
+    """Return the correct NOW() function for the current database type"""
+    if DB_TYPE == "postgresql":
+        return "NOW()"
+    return "datetime('now')"
+
+def sql_autoincrement() -> str:
+    """Return the correct auto-increment syntax"""
+    if DB_TYPE == "postgresql":
+        return "SERIAL PRIMARY KEY"
+    return "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+def sql_insert_ignore() -> str:
+    """Return the correct INSERT OR IGNORE syntax"""
+    if DB_TYPE == "postgresql":
+        return "INSERT INTO"  # Will use ON CONFLICT separately
+    return "INSERT OR IGNORE INTO"
+
+def sql_on_conflict_ignore() -> str:
+    """Return ON CONFLICT clause for PostgreSQL"""
+    if DB_TYPE == "postgresql":
+        return "ON CONFLICT DO NOTHING"
+    return ""
+
+def sql_boolean(val: bool) -> str:
+    """Return boolean for current database"""
+    if DB_TYPE == "postgresql":
+        return "TRUE" if val else "FALSE"
+    return "1" if val else "0"
+
+def table_exists(cursor, table_name: str) -> bool:
+    """Check if a table exists in the database"""
+    if DB_TYPE == "postgresql":
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = %s
+            )
+        """, (table_name,))
+        return cursor.fetchone()[0]
+    else:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        return cursor.fetchone() is not None
+
+def column_exists(cursor, table_name: str, column_name: str) -> bool:
+    """Check if a column exists in a table"""
+    if DB_TYPE == "postgresql":
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+            )
+        """, (table_name, column_name))
+        return cursor.fetchone()[0]
+    else:
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = [col[1] for col in cursor.fetchall()]
+        return column_name in columns
+
+def add_column_if_not_exists(cursor, table_name: str, column_name: str, column_type: str, default: str = None):
+    """Add a column to a table if it doesn't exist"""
+    if not column_exists(cursor, table_name, column_name):
+        if DB_TYPE == "postgresql":
+            default_clause = f" DEFAULT {default}" if default else ""
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}{default_clause}")
+        else:
+            # SQLite doesn't allow non-constant defaults in ALTER TABLE ADD COLUMN
+            # For CURRENT_TIMESTAMP or similar, add without default then update
+            if default and default.upper() in ('CURRENT_TIMESTAMP', 'NOW()'):
+                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                cursor.execute(f"UPDATE {table_name} SET {column_name} = CURRENT_TIMESTAMP WHERE {column_name} IS NULL")
+            else:
+                default_clause = f" DEFAULT {default}" if default else ""
+                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}{default_clause}")
 
 def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("""
+        # Use database-specific syntax
+        if DB_TYPE == "postgresql":
+            auto_id = "SERIAL PRIMARY KEY"
+            param = "%s"
+            bool_true = "TRUE"
+            bool_false = "FALSE"
+        else:
+            auto_id = "INTEGER PRIMARY KEY AUTOINCREMENT"
+            param = "?"
+            bool_true = "1"
+            bool_false = "0"
+
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS raw_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {auto_id},
                 timestamp TEXT NOT NULL,
                 raw_log TEXT NOT NULL,
                 status TEXT DEFAULT 'PENDING',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                processed_at TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP,
                 severity TEXT,
                 event_type TEXT,
                 ai_summary TEXT,
@@ -180,20 +390,20 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON raw_logs(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON raw_logs(timestamp)")
 
-        cursor.execute("""
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS ai_knowledge (
                 pattern_hash TEXT PRIMARY KEY,
                 corrected_severity TEXT NOT NULL,
                 reason TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
         # Severity Adjustments - Track all severity changes with conditions
-        cursor.execute("""
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS severity_adjustments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {auto_id},
                 log_id INTEGER,
                 pattern_hash TEXT,
                 original_severity TEXT NOT NULL,
@@ -445,11 +655,18 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_time ON login_attempts(attempted_at)")
 
         # Add role column to users if not exists
-        cursor.execute("PRAGMA table_info(users)")
-        user_columns = [col[1] for col in cursor.fetchall()]
-        if 'role' not in user_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'analyst'")
-            cursor.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1")
+        # Add columns to users table if not exists (database-agnostic)
+        add_column_if_not_exists(cursor, 'users', 'role', 'TEXT', "'analyst'")
+        add_column_if_not_exists(cursor, 'users', 'password_changed_at', 'TIMESTAMP', 'CURRENT_TIMESTAMP')
+        add_column_if_not_exists(cursor, 'users', 'must_change_password', 'BOOLEAN', '0')
+        add_column_if_not_exists(cursor, 'users', 'failed_login_count', 'INTEGER', '0')
+        add_column_if_not_exists(cursor, 'users', 'locked_until', 'TIMESTAMP', 'NULL')
+
+        # Update existing admin users
+        if DB_TYPE == "postgresql":
+            cursor.execute("UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND role IS NULL")
+        else:
+            cursor.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role IS NULL")
 
         # NEW: Audit Log Table
         cursor.execute("""
@@ -535,15 +752,42 @@ def init_db():
             )
         """)
 
-        # Create default admin user if not exists
+        # NEW: User Sessions Table for session management
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id {auto_id},
+                user_id INTEGER NOT NULL,
+                session_token_hash TEXT UNIQUE NOT NULL,
+                refresh_token_hash TEXT UNIQUE,
+                ip_address TEXT,
+                user_agent TEXT,
+                is_active BOOLEAN DEFAULT {bool_true},
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                revoked_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_active ON user_sessions(is_active)")
+
+        # Create default admin user if not exists (with forced password change)
         cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
         if cursor.fetchone()[0] == 0:
             admin_password_hash = pwd_context.hash("changeme")
-            cursor.execute("""
-                INSERT INTO users (username, password_hash, full_name, is_admin)
-                VALUES (?, ?, ?, ?)
-            """, ("admin", admin_password_hash, "System Administrator", 1))
-            logger.info("Default admin user created (username: admin, password: changeme)")
+            if DB_TYPE == "postgresql":
+                cursor.execute("""
+                    INSERT INTO users (username, password_hash, full_name, is_admin, must_change_password, role)
+                    VALUES (%s, %s, %s, TRUE, TRUE, 'admin')
+                """, ("admin", admin_password_hash, "System Administrator"))
+            else:
+                cursor.execute("""
+                    INSERT INTO users (username, password_hash, full_name, is_admin, must_change_password, role)
+                    VALUES (?, ?, ?, 1, 1, 'admin')
+                """, ("admin", admin_password_hash, "System Administrator"))
+            logger.warning("Default admin user created (username: admin, password: changeme) - PASSWORD CHANGE REQUIRED ON FIRST LOGIN")
 
         # Insert default correlation rules
         cursor.execute("""
@@ -581,6 +825,214 @@ def get_password_hash(password: str) -> str:
     """Hash a password for storing"""
     return pwd_context.hash(password)
 
+def validate_password_policy(password: str) -> tuple[bool, str]:
+    """
+    Validate password against policy requirements.
+    Returns (is_valid, error_message)
+    """
+    errors = []
+
+    if len(password) < PASSWORD_MIN_LENGTH:
+        errors.append(f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+
+    if PASSWORD_REQUIRE_UPPERCASE and not re.search(r'[A-Z]', password):
+        errors.append("Password must contain at least one uppercase letter")
+
+    if PASSWORD_REQUIRE_LOWERCASE and not re.search(r'[a-z]', password):
+        errors.append("Password must contain at least one lowercase letter")
+
+    if PASSWORD_REQUIRE_DIGIT and not re.search(r'\d', password):
+        errors.append("Password must contain at least one digit")
+
+    if PASSWORD_REQUIRE_SPECIAL and not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        errors.append("Password must contain at least one special character (!@#$%^&*(),.?\":{}|<>)")
+
+    if errors:
+        return False, "; ".join(errors)
+    return True, ""
+
+def is_account_locked(username: str) -> tuple[bool, int]:
+    """
+    Check if account is locked due to failed login attempts.
+    Returns (is_locked, remaining_minutes)
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            lockout_window = datetime.datetime.utcnow() - timedelta(minutes=ACCOUNT_LOCKOUT_DURATION_MINUTES)
+
+            if DB_TYPE == "postgresql":
+                cursor.execute("""
+                    SELECT COUNT(*) as failed_count, MAX(attempted_at) as last_attempt
+                    FROM login_attempts
+                    WHERE username = %s AND success = FALSE AND attempted_at > %s
+                """, (username, lockout_window.isoformat()))
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) as failed_count, MAX(attempted_at) as last_attempt
+                    FROM login_attempts
+                    WHERE username = ? AND success = 0 AND attempted_at > ?
+                """, (username, lockout_window.isoformat()))
+
+            result = cursor.fetchone()
+            if result:
+                failed_count = result['failed_count'] if isinstance(result, dict) else result[0]
+                if failed_count >= ACCOUNT_LOCKOUT_THRESHOLD:
+                    last_attempt = result['last_attempt'] if isinstance(result, dict) else result[1]
+                    if last_attempt:
+                        try:
+                            last_attempt_dt = datetime.datetime.fromisoformat(last_attempt.replace('Z', '+00:00'))
+                        except:
+                            last_attempt_dt = datetime.datetime.strptime(last_attempt, '%Y-%m-%d %H:%M:%S')
+                        unlock_time = last_attempt_dt + timedelta(minutes=ACCOUNT_LOCKOUT_DURATION_MINUTES)
+                        remaining = (unlock_time - datetime.datetime.utcnow()).total_seconds() / 60
+                        if remaining > 0:
+                            return True, int(remaining)
+            return False, 0
+    except Exception as e:
+        logger.error(f"Error checking account lockout: {e}")
+        return False, 0
+
+def check_password_expired(user_id: int) -> bool:
+    """Check if user's password has expired"""
+    if PASSWORD_EXPIRY_DAYS <= 0:
+        return False
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if DB_TYPE == "postgresql":
+                cursor.execute("""
+                    SELECT password_changed_at FROM users WHERE id = %s
+                """, (user_id,))
+            else:
+                cursor.execute("""
+                    SELECT password_changed_at FROM users WHERE id = ?
+                """, (user_id,))
+            result = cursor.fetchone()
+            if result and result[0]:
+                try:
+                    changed_at = datetime.datetime.fromisoformat(result[0].replace('Z', '+00:00'))
+                except:
+                    changed_at = datetime.datetime.strptime(result[0], '%Y-%m-%d %H:%M:%S')
+                expiry_date = changed_at + timedelta(days=PASSWORD_EXPIRY_DAYS)
+                return datetime.datetime.utcnow() > expiry_date
+    except Exception as e:
+        logger.error(f"Error checking password expiry: {e}")
+    return False
+
+def create_session(user_id: int, access_token: str, refresh_token: str,
+                   ip_address: str = None, user_agent: str = None) -> int:
+    """Create a new session record and enforce concurrent session limits"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            bool_false = "FALSE" if DB_TYPE == "postgresql" else "0"
+
+            # Enforce max concurrent sessions - revoke oldest if limit exceeded
+            cursor.execute(f"""
+                SELECT id FROM user_sessions
+                WHERE user_id = {param} AND is_active = {'TRUE' if DB_TYPE == 'postgresql' else '1'}
+                ORDER BY created_at ASC
+            """, (user_id,))
+            active_sessions = cursor.fetchall()
+
+            if len(active_sessions) >= MAX_CONCURRENT_SESSIONS:
+                # Revoke oldest sessions
+                sessions_to_revoke = len(active_sessions) - MAX_CONCURRENT_SESSIONS + 1
+                for i in range(sessions_to_revoke):
+                    session_id = active_sessions[i][0] if isinstance(active_sessions[i], tuple) else active_sessions[i]['id']
+                    cursor.execute(f"""
+                        UPDATE user_sessions SET is_active = {bool_false},
+                               revoked_at = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+                        WHERE id = {param}
+                    """, (session_id,))
+                logger.info(f"Revoked {sessions_to_revoke} old session(s) for user {user_id} due to concurrent session limit")
+
+            # Create new session
+            access_hash = hashlib.sha256(access_token.encode()).hexdigest()
+            refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+            expires_at = datetime.datetime.utcnow() + timedelta(days=JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+
+            cursor.execute(f"""
+                INSERT INTO user_sessions (user_id, session_token_hash, refresh_token_hash,
+                                          ip_address, user_agent, expires_at)
+                VALUES ({param}, {param}, {param}, {param}, {param}, {param})
+            """, (user_id, access_hash, refresh_hash, ip_address, user_agent, expires_at.isoformat()))
+            conn.commit()
+
+            return cursor.lastrowid
+    except Exception as e:
+        logger.error(f"Error creating session: {e}")
+        return None
+
+def revoke_session(session_token: str) -> bool:
+    """Revoke a specific session by its access token"""
+    try:
+        token_hash = hashlib.sha256(session_token.encode()).hexdigest()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            bool_false = "FALSE" if DB_TYPE == "postgresql" else "0"
+            cursor.execute(f"""
+                UPDATE user_sessions SET is_active = {bool_false},
+                       revoked_at = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+                WHERE session_token_hash = {param}
+            """, (token_hash,))
+            conn.commit()
+            return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error revoking session: {e}")
+        return False
+
+def revoke_all_user_sessions(user_id: int, except_current: str = None) -> int:
+    """Revoke all sessions for a user, optionally except the current one"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            bool_false = "FALSE" if DB_TYPE == "postgresql" else "0"
+
+            if except_current:
+                current_hash = hashlib.sha256(except_current.encode()).hexdigest()
+                cursor.execute(f"""
+                    UPDATE user_sessions SET is_active = {bool_false},
+                           revoked_at = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+                    WHERE user_id = {param} AND session_token_hash != {param}
+                """, (user_id, current_hash))
+            else:
+                cursor.execute(f"""
+                    UPDATE user_sessions SET is_active = {bool_false},
+                           revoked_at = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+                    WHERE user_id = {param}
+                """, (user_id,))
+            conn.commit()
+            return cursor.rowcount
+    except Exception as e:
+        logger.error(f"Error revoking user sessions: {e}")
+        return 0
+
+def get_active_sessions(user_id: int) -> List[Dict[str, Any]]:
+    """Get all active sessions for a user"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            cursor.execute(f"""
+                SELECT id, ip_address, user_agent, created_at, last_activity
+                FROM user_sessions
+                WHERE user_id = {param} AND is_active = {'TRUE' if DB_TYPE == 'postgresql' else '1'}
+                ORDER BY last_activity DESC
+            """, (user_id,))
+            sessions = cursor.fetchall()
+            return [dict(s) if hasattr(s, 'keys') else {
+                'id': s[0], 'ip_address': s[1], 'user_agent': s[2],
+                'created_at': s[3], 'last_activity': s[4]
+            } for s in sessions]
+    except Exception as e:
+        logger.error(f"Error getting sessions: {e}")
+        return []
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token"""
     to_encode = data.copy()
@@ -600,44 +1052,71 @@ def create_refresh_token(data: dict) -> str:
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
-def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
-    """Authenticate a user by username and password"""
+def authenticate_user(username: str, password: str) -> Dict[str, Any]:
+    """
+    Authenticate a user by username and password.
+    Returns dict with user info or error details.
+    """
+    # Check account lockout first
+    is_locked, remaining_mins = is_account_locked(username)
+    if is_locked:
+        return {"error": "account_locked", "message": f"Account locked. Try again in {remaining_mins} minutes."}
+
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, username, password_hash, full_name, email, is_active, is_admin, role
-                FROM users WHERE username = ?
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            cursor.execute(f"""
+                SELECT id, username, password_hash, full_name, email, is_active, is_admin, role,
+                       must_change_password, password_changed_at
+                FROM users WHERE username = {param}
             """, (username,))
             user = cursor.fetchone()
 
             if not user:
-                return None
+                return {"error": "invalid_credentials", "message": "Invalid username or password"}
 
-            if not user['is_active']:
-                return None
+            # Convert row to dict if needed
+            if hasattr(user, 'keys'):
+                user_dict = dict(user)
+            else:
+                user_dict = {
+                    'id': user[0], 'username': user[1], 'password_hash': user[2],
+                    'full_name': user[3], 'email': user[4], 'is_active': user[5],
+                    'is_admin': user[6], 'role': user[7], 'must_change_password': user[8],
+                    'password_changed_at': user[9]
+                }
 
-            if not verify_password(password, user['password_hash']):
-                return None
+            if not user_dict['is_active']:
+                return {"error": "account_disabled", "message": "Account is disabled"}
 
-            # Update last login
-            cursor.execute("""
-                UPDATE users SET last_login = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (user['id'],))
+            if not verify_password(password, user_dict['password_hash']):
+                return {"error": "invalid_credentials", "message": "Invalid username or password"}
+
+            # Check if password must be changed
+            must_change = user_dict.get('must_change_password', False)
+            password_expired = check_password_expired(user_dict['id'])
+
+            # Update last login and reset failed count
+            cursor.execute(f"""
+                UPDATE users SET last_login = CURRENT_TIMESTAMP, failed_login_count = 0
+                WHERE id = {param}
+            """, (user_dict['id'],))
             conn.commit()
 
             return {
-                "id": user['id'],
-                "username": user['username'],
-                "full_name": user['full_name'],
-                "email": user['email'],
-                "is_admin": bool(user['is_admin']),
-                "role": user['role'] or ('admin' if user['is_admin'] else 'analyst')
+                "id": user_dict['id'],
+                "username": user_dict['username'],
+                "full_name": user_dict['full_name'],
+                "email": user_dict['email'],
+                "is_admin": bool(user_dict['is_admin']),
+                "role": user_dict['role'] or ('admin' if user_dict['is_admin'] else 'analyst'),
+                "must_change_password": bool(must_change) or password_expired,
+                "password_expired": password_expired
             }
     except Exception as e:
         logger.error(f"Authentication error: {e}")
-        return None
+        return {"error": "server_error", "message": "Authentication service error"}
 
 def verify_api_key(api_key: str) -> Optional[Dict[str, Any]]:
     """Verify an API key and return associated user"""
@@ -1706,42 +2185,71 @@ async def login(request: Request, login_data: LoginRequest):
     """
     Authenticate user and return JWT tokens.
     Rate limited to 5 attempts per minute per IP address.
+    Includes account lockout and password policy enforcement.
     """
     client_ip = get_remote_address(request)
 
-    # Authenticate user
-    user = authenticate_user(login_data.username, login_data.password)
+    # Authenticate user (now returns dict with error info or user info)
+    result = authenticate_user(login_data.username, login_data.password)
 
-    # Record login attempt
-    record_login_attempt(login_data.username, client_ip, user is not None)
+    # Check for authentication errors
+    if "error" in result:
+        # Record failed login attempt
+        record_login_attempt(login_data.username, client_ip, False)
 
-    if not user:
         # Add a small delay to prevent timing attacks
         await asyncio.sleep(0.5)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+
+        error_code = result["error"]
+        if error_code == "account_locked":
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=result["message"],
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        elif error_code == "account_disabled":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result["message"],
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    user = result
+
+    # Record successful login attempt
+    record_login_attempt(login_data.username, client_ip, True)
 
     # Create tokens
     access_token = create_access_token(data={"sub": user["username"]})
-    refresh_token = create_refresh_token(data={"sub": user["username"]})
+    refresh_token_str = create_refresh_token(data={"sub": user["username"]})
+
+    # Create session record
+    user_agent = request.headers.get("User-Agent", "Unknown")
+    session_id = create_session(user['id'], access_token, refresh_token_str, client_ip, user_agent)
+    if session_id:
+        logger.debug(f"Created session {session_id} for user {user['username']}")
 
     logger.info(f"User {user['username']} logged in from {client_ip}")
-    record_audit(user['id'], user['username'], 'login', 'session', None, None, client_ip)
+    record_audit(user['id'], user['username'], 'login', 'session', str(session_id), None, client_ip)
 
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
+        "refresh_token": refresh_token_str,
         "token_type": "bearer",
         "user": user
     }
 
 @app.post("/api/auth/refresh", response_model=TokenResponse)
-async def refresh_token(token_data: RefreshTokenRequest):
+async def refresh_token(request: Request, token_data: RefreshTokenRequest):
     """
     Refresh an access token using a refresh token.
+    Validates the refresh token against active sessions.
     """
     try:
         payload = jwt.decode(token_data.refresh_token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
@@ -1756,9 +2264,31 @@ async def refresh_token(token_data: RefreshTokenRequest):
 
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            param = "%s" if DB_TYPE == "postgresql" else "?"
+            bool_true = "TRUE" if DB_TYPE == "postgresql" else "1"
+            bool_false = "FALSE" if DB_TYPE == "postgresql" else "0"
+
+            # Verify refresh token is associated with an active session
+            refresh_hash = hashlib.sha256(token_data.refresh_token.encode()).hexdigest()
+            cursor.execute(f"""
+                SELECT s.id, s.user_id FROM user_sessions s
+                JOIN users u ON s.user_id = u.id
+                WHERE s.refresh_token_hash = {param} AND s.is_active = {bool_true}
+                  AND u.username = {param}
+            """, (refresh_hash, username))
+            session = cursor.fetchone()
+
+            if not session:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired or revoked. Please login again.",
+                )
+
+            session_id = session[0] if isinstance(session, tuple) else session['id']
+
+            cursor.execute(f"""
                 SELECT id, username, full_name, email, is_admin
-                FROM users WHERE username = ? AND is_active = 1
+                FROM users WHERE username = {param} AND is_active = {bool_true}
             """, (username,))
             user = cursor.fetchone()
 
@@ -1769,16 +2299,27 @@ async def refresh_token(token_data: RefreshTokenRequest):
                 )
 
             user_dict = {
-                "id": user['id'],
-                "username": user['username'],
-                "full_name": user['full_name'],
-                "email": user['email'],
-                "is_admin": bool(user['is_admin'])
+                "id": user[0] if isinstance(user, tuple) else user['id'],
+                "username": user[1] if isinstance(user, tuple) else user['username'],
+                "full_name": user[2] if isinstance(user, tuple) else user['full_name'],
+                "email": user[3] if isinstance(user, tuple) else user['email'],
+                "is_admin": bool(user[4] if isinstance(user, tuple) else user['is_admin'])
             }
 
             # Create new tokens
-            access_token = create_access_token(data={"sub": user['username']})
-            new_refresh_token = create_refresh_token(data={"sub": user['username']})
+            access_token = create_access_token(data={"sub": username})
+            new_refresh_token = create_refresh_token(data={"sub": username})
+
+            # Update session with new token hashes
+            new_access_hash = hashlib.sha256(access_token.encode()).hexdigest()
+            new_refresh_hash = hashlib.sha256(new_refresh_token.encode()).hexdigest()
+            cursor.execute(f"""
+                UPDATE user_sessions SET session_token_hash = {param},
+                       refresh_token_hash = {param},
+                       last_activity = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+                WHERE id = {param}
+            """, (new_access_hash, new_refresh_hash, session_id))
+            conn.commit()
 
             return {
                 "access_token": access_token,
@@ -1793,12 +2334,162 @@ async def refresh_token(token_data: RefreshTokenRequest):
         )
 
 @app.post("/api/auth/logout")
-async def logout(current_user: Dict[str, Any] = Depends(get_current_user)):
+async def logout(request: Request,
+                 credentials: HTTPAuthorizationCredentials = Depends(security),
+                 current_user: Dict[str, Any] = Depends(get_current_user)):
     """
-    Logout endpoint (client-side token removal).
+    Logout endpoint - revokes the current session server-side.
     """
-    logger.info(f"User {current_user['username']} logged out")
+    client_ip = get_remote_address(request)
+    current_token = credentials.credentials
+
+    # Revoke the session
+    revoked = revoke_session(current_token)
+    if revoked:
+        logger.info(f"User {current_user['username']} logged out (session revoked) from {client_ip}")
+    else:
+        logger.info(f"User {current_user['username']} logged out from {client_ip}")
+
+    record_audit(current_user['id'], current_user['username'], 'logout', 'session', None, None, client_ip)
     return {"message": "Successfully logged out"}
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.post("/api/auth/change-password")
+@limiter.limit("5/minute")
+async def change_password(request: Request, password_data: ChangePasswordRequest,
+                          current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Change the current user's password.
+    Validates against password policy and updates password_changed_at.
+    """
+    client_ip = get_remote_address(request)
+
+    # Validate new password against policy
+    is_valid, error_msg = validate_password_policy(password_data.new_password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password does not meet requirements: {error_msg}"
+        )
+
+    # Verify current password
+    with get_db() as conn:
+        cursor = conn.cursor()
+        param = "%s" if DB_TYPE == "postgresql" else "?"
+        cursor.execute(f"SELECT password_hash FROM users WHERE id = {param}", (current_user['id'],))
+        result = cursor.fetchone()
+
+        if not result or not verify_password(password_data.current_password, result[0]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect"
+            )
+
+        # Update password
+        new_hash = get_password_hash(password_data.new_password)
+        if DB_TYPE == "postgresql":
+            cursor.execute("""
+                UPDATE users SET password_hash = %s, password_changed_at = NOW(),
+                       must_change_password = FALSE WHERE id = %s
+            """, (new_hash, current_user['id']))
+        else:
+            cursor.execute("""
+                UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP,
+                       must_change_password = 0 WHERE id = ?
+            """, (new_hash, current_user['id']))
+        conn.commit()
+
+    logger.info(f"User {current_user['username']} changed password from {client_ip}")
+    record_audit(current_user['id'], current_user['username'], 'password_change',
+                 'user', str(current_user['id']), None, client_ip)
+
+    return {"message": "Password changed successfully"}
+
+@app.get("/api/auth/password-policy")
+async def get_password_policy():
+    """Return the current password policy requirements"""
+    return {
+        "min_length": PASSWORD_MIN_LENGTH,
+        "require_uppercase": PASSWORD_REQUIRE_UPPERCASE,
+        "require_lowercase": PASSWORD_REQUIRE_LOWERCASE,
+        "require_digit": PASSWORD_REQUIRE_DIGIT,
+        "require_special": PASSWORD_REQUIRE_SPECIAL,
+        "expiry_days": PASSWORD_EXPIRY_DAYS
+    }
+
+@app.get("/api/auth/sessions")
+async def list_sessions(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    List all active sessions for the current user.
+    Returns session details including IP address, user agent, and activity times.
+    """
+    sessions = get_active_sessions(current_user['id'])
+    return {
+        "sessions": sessions,
+        "max_concurrent_sessions": MAX_CONCURRENT_SESSIONS
+    }
+
+@app.delete("/api/auth/sessions/{session_id}")
+async def revoke_session_by_id(session_id: int, request: Request,
+                               current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Revoke a specific session by ID.
+    Users can only revoke their own sessions.
+    """
+    client_ip = get_remote_address(request)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        param = "%s" if DB_TYPE == "postgresql" else "?"
+        bool_false = "FALSE" if DB_TYPE == "postgresql" else "0"
+
+        # Verify session belongs to current user
+        cursor.execute(f"""
+            SELECT id FROM user_sessions
+            WHERE id = {param} AND user_id = {param} AND is_active = {'TRUE' if DB_TYPE == 'postgresql' else '1'}
+        """, (session_id, current_user['id']))
+
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or already revoked"
+            )
+
+        # Revoke the session
+        cursor.execute(f"""
+            UPDATE user_sessions SET is_active = {bool_false},
+                   revoked_at = {'NOW()' if DB_TYPE == 'postgresql' else 'CURRENT_TIMESTAMP'}
+            WHERE id = {param}
+        """, (session_id,))
+        conn.commit()
+
+    logger.info(f"User {current_user['username']} revoked session {session_id} from {client_ip}")
+    record_audit(current_user['id'], current_user['username'], 'session_revoke',
+                 'session', str(session_id), None, client_ip)
+
+    return {"message": "Session revoked successfully"}
+
+@app.post("/api/auth/sessions/revoke-all")
+async def revoke_all_sessions(request: Request,
+                              credentials: HTTPAuthorizationCredentials = Depends(security),
+                              current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Revoke all sessions except the current one.
+    Useful for "sign out everywhere else" functionality.
+    """
+    client_ip = get_remote_address(request)
+    current_token = credentials.credentials
+
+    count = revoke_all_user_sessions(current_user['id'], except_current=current_token)
+
+    logger.info(f"User {current_user['username']} revoked {count} other sessions from {client_ip}")
+    record_audit(current_user['id'], current_user['username'], 'session_revoke_all',
+                 'session', None, f"Revoked {count} sessions", client_ip)
+
+    return {"message": f"Revoked {count} other session(s)", "revoked_count": count}
 
 @app.get("/api/auth/me", response_model=UserResponse)
 async def get_current_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):

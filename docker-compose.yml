@@ -3,6 +3,30 @@
 
 services:
   # ==============================================================================
+  # PostgreSQL Database (Production)
+  # ==============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: siem-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-soc_agent}
+      - POSTGRES_USER=${POSTGRES_USER:-soc_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - siem-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soc_admin} -d ${POSTGRES_DB:-soc_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ==============================================================================
   # SIEM API Service - Main Application
   # ==============================================================================
   siem-api:
@@ -16,7 +40,9 @@ services:
       - "${API_PORT:-8080}:8000"
       - "${LISTEN_PORT:-5047}:5046"
     environment:
-      # Database
+      # Database - PostgreSQL (production)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-soc_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-soc_agent}
+      # Fallback to SQLite for local development
       - DB_NAME=/app/data/ai_agent_logs.db
       # Elasticsearch/OpenSearch
       - ES_HOSTS=http://opensearch:9200
@@ -61,6 +87,8 @@ services:
       - siem-logs:/app/logs
       - ./templates:/app/templates:ro
     depends_on:
+      postgres:
+        condition: service_healthy
       opensearch:
         condition: service_healthy
       ollama:
@@ -163,6 +191,8 @@ networks:
 # Volumes
 # ==============================================================================
 volumes:
+  postgres-data:
+    name: siem-postgres-data
   siem-data:
     name: siem-data
   siem-logs:
