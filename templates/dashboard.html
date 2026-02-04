@@ -7,27 +7,30 @@
 
     <!-- Chart.js for Visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Leaflet for Geo Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <style>
         :root {
-            --primary-bg: #1c2132;
-            --secondary-bg: #293145;
-            --active-color: #00ff73;
-            --text-color: #e0e0e0;
-            --border-color: #3b4257;
-            --high-severity: #ff4d4d;
-            --critical-severity: #cc0000;
-            --medium-severity: #ffd700;
-            --low-severity: #4CAF50;
+            --primary-bg: #0F172A;
+            --secondary-bg: #1E293B;
+            --active-color: #60A5FA;
+            --text-color: #E2E8F0;
+            --border-color: #334155;
+            --high-severity: #EF4444;
+            --critical-severity: #DC2626;
+            --medium-severity: #F59E0B;
+            --low-severity: #6EE7B7;
         }
 
         /* Light Mode Theme */
         :root.light-mode {
-            --primary-bg: #f0f2f5;
-            --secondary-bg: #ffffff;
-            --active-color: #00aa55;
-            --text-color: #1c2132;
-            --border-color: #d0d4dc;
+            --primary-bg: #F8FAFC;
+            --secondary-bg: #FFFFFF;
+            --active-color: #3B82F6;
+            --text-color: #1E293B;
+            --border-color: #CBD5E1;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -89,7 +92,7 @@
         }
 
         .nav-tab:hover {
-            background-color: rgba(0, 255, 115, 0.1);
+            background-color: rgba(96, 165, 250, 0.08);
             border-color: var(--active-color);
         }
 
@@ -132,7 +135,7 @@
 
         .metric-card:hover {
             border-color: var(--active-color);
-            box-shadow: 0 2px 8px rgba(0, 255, 115, 0.15);
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.4);
         }
 
         .metric-label {
@@ -173,21 +176,21 @@
 
         .info-icon:hover {
             transform: scale(1.15);
-            box-shadow: 0 0 8px var(--active-color);
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.5);
         }
 
         /* Custom Tooltip */
         #custom-tooltip {
             position: fixed;
-            background: #1e1e2e;
-            color: #ffffff;
+            background: var(--secondary-bg);
+            color: var(--text-color);
             padding: 12px 16px;
             border-radius: 8px;
             font-size: 13px;
             line-height: 1.5;
             z-index: 999999;
-            border: 2px solid var(--active-color);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.7);
             max-width: 320px;
             min-width: 220px;
             pointer-events: none;
@@ -272,7 +275,7 @@
         }
 
         .btn:hover {
-            box-shadow: 0 2px 6px rgba(0, 255, 115, 0.3);
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.4);
         }
 
         .btn-secondary {
@@ -300,7 +303,7 @@
         }
 
         tr:hover {
-            background-color: rgba(0, 255, 115, 0.05);
+            background-color: rgba(96, 165, 250, 0.05);
         }
 
         /* Badge Styles */
@@ -338,13 +341,14 @@
 
         .modal-content {
             background: var(--secondary-bg);
-            border: 1px solid var(--active-color);
+            border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 15px;
             max-width: 1000px;
             width: 95%;
             max-height: 90vh;
             overflow-y: auto;
+            box-shadow: 0 12px 40px rgba(15, 23, 42, 0.8);
         }
 
         .modal-header {
@@ -489,14 +493,14 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 12px rgba(0, 255, 115, 0.4);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.5);
             z-index: 999;
             transition: all 0.3s;
         }
 
         .chatbot-toggle:hover {
-            transform: scale(1.1);
-            box-shadow: 0 6px 20px rgba(0, 255, 115, 0.6);
+            transform: scale(1.05);
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.6);
         }
 
         .chatbot-panel {
@@ -506,11 +510,11 @@
             width: 380px;
             height: 500px;
             background: var(--secondary-bg);
-            border: 2px solid var(--active-color);
+            border: 1px solid var(--border-color);
             border-radius: 12px;
             display: none;
             flex-direction: column;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.6);
             z-index: 998;
         }
 
@@ -627,6 +631,119 @@
             30% { transform: translateY(-10px); opacity: 0.7; }
         }
 
+        /* Action Chatbot */
+        .action-chatbot-toggle {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.5);
+            z-index: 999;
+            transition: all 0.3s;
+        }
+
+        .action-chatbot-toggle:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.6);
+        }
+
+        .action-chatbot-panel {
+            position: fixed;
+            bottom: 170px;
+            right: 30px;
+            width: 400px;
+            height: 550px;
+            background: var(--secondary-bg);
+            border: 2px solid #6366F1;
+            border-radius: 12px;
+            display: none;
+            flex-direction: column;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.6);
+            z-index: 998;
+        }
+
+        .action-chatbot-panel.active {
+            display: flex;
+        }
+
+        .action-chat-header {
+            padding: 15px;
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            color: white;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .action-context-bar {
+            padding: 10px 15px;
+            background: rgba(99, 102, 241, 0.08);
+            border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+            font-size: 0.85em;
+            color: var(--text-color);
+            opacity: 0.9;
+        }
+
+        .action-context-bar .context-item {
+            display: inline-block;
+            margin-right: 12px;
+            padding: 3px 8px;
+            background: rgba(99, 102, 241, 0.15);
+            border-radius: 4px;
+        }
+
+        .action-chat-body {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            background: var(--primary-bg);
+        }
+
+        .action-chat-message {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+            font-size: 0.9em;
+        }
+
+        .action-chat-user {
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .action-chat-ai {
+            background: var(--secondary-bg);
+            color: var(--text-color);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .action-result-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            margin-top: 8px;
+            background: var(--active-color);
+            color: var(--primary-bg);
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
         /* Severity Change Buttons */
         .severity-buttons {
             display: flex;
@@ -677,7 +794,7 @@
         .learn-message {
             margin-top: 10px;
             padding: 10px;
-            background: rgba(0, 255, 115, 0.1);
+            background: rgba(96, 165, 250, 0.08);
             border-left: 3px solid var(--active-color);
             border-radius: 4px;
             font-size: 0.9em;
@@ -727,13 +844,13 @@
             right: 0;
             margin-top: 8px;
             background: var(--secondary-bg);
-            border: 1px solid var(--active-color);
+            border: 1px solid var(--border-color);
             border-radius: 6px;
             min-width: 280px;
             max-height: 400px;
             overflow-y: auto;
             z-index: 1000;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.6);
         }
 
         .system-dropdown.active {
@@ -853,9 +970,9 @@
             max-height: 400px;
             overflow-y: auto;
             background: var(--secondary-bg);
-            border: 2px solid var(--border-color);
+            border: 1px solid var(--border-color);
             border-radius: 8px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.6);
             z-index: 1001;
             display: none;
         }
@@ -872,7 +989,7 @@
         }
 
         .notification-item:hover {
-            background: rgba(0, 255, 115, 0.1);
+            background: rgba(96, 165, 250, 0.08);
         }
 
         .notification-item.critical {
@@ -914,7 +1031,7 @@
         .toast {
             padding: 15px 20px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.5);
             animation: slideInRight 0.3s ease-out;
             max-width: 350px;
         }
@@ -1017,7 +1134,7 @@
         }
 
         .mitre-cell.detected {
-            background: rgba(0, 255, 115, 0.2);
+            background: rgba(96, 165, 250, 0.15);
             border-color: var(--active-color);
         }
 
@@ -1185,7 +1302,7 @@
         .kanban-card:hover {
             border-color: var(--active-color);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.5);
         }
 
         .kanban-card.dragging {
@@ -1279,7 +1396,7 @@
         }
 
         .remediation-content code {
-            background: rgba(0, 170, 85, 0.15);
+            background: rgba(96, 165, 250, 0.12);
             padding: 1px 5px;
             border-radius: 3px;
             font-family: 'Courier New', monospace;
@@ -1296,8 +1413,8 @@
         }
 
         .btn-remediation {
-            background: linear-gradient(135deg, var(--active-color) 0%, #00cc5c 100%);
-            color: var(--primary-bg);
+            background: var(--active-color);
+            color: white;
             border: none;
             padding: 10px 20px;
             border-radius: 6px;
@@ -1307,8 +1424,8 @@
         }
 
         .btn-remediation:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 12px rgba(0, 255, 115, 0.4);
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.5);
         }
 
         .btn-remediation:disabled {
@@ -1316,6 +1433,110 @@
             cursor: not-allowed;
             transform: none;
         }
+
+        /* === Professional Feature Styles === */
+        /* Role Badge */
+        .role-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7em; font-weight:bold; margin-left:6px; }
+        .role-admin { background:#8B5CF6; color:white; }
+        .role-analyst { background:#3B82F6; color:white; }
+        .role-manager { background:#10B981; color:white; }
+
+        /* Triage Toolbar */
+        .triage-toolbar { display:flex; gap:6px; align-items:center; padding:6px 8px; background:var(--primary-bg); border-radius:6px; margin-bottom:6px; flex-wrap:wrap; }
+        .triage-toolbar .btn { font-size:0.78em; padding:4px 10px; }
+        .triage-count { font-size:0.8em; font-weight:bold; color:var(--active-color); }
+        .triage-checkbox { width:16px; height:16px; cursor:pointer; accent-color:var(--active-color); }
+
+        /* Live Log Feed Panel */
+        .live-feed-panel { position:fixed; bottom:20px; left:20px; width:380px; height:320px; background:var(--secondary-bg);
+            border:1px solid var(--border-color); border-radius:10px; z-index:997; display:none; flex-direction:column;
+            box-shadow:0 8px 24px rgba(15,23,42,0.6); }
+        .live-feed-panel.active { display:flex; }
+        .live-feed-header { padding:8px 12px; background:var(--active-color); color:var(--primary-bg); border-radius:9px 9px 0 0;
+            font-weight:bold; display:flex; justify-content:space-between; align-items:center; font-size:0.85em; }
+        .live-feed-body { flex:1; overflow-y:auto; padding:6px; font-size:0.75em; font-family:monospace; }
+        .live-feed-entry { padding:3px 6px; border-bottom:1px solid var(--border-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .live-feed-toggle { position:fixed; bottom:20px; left:20px; width:44px; height:44px; background:var(--active-color);
+            border-radius:50%; border:none; cursor:pointer; font-size:20px; display:flex; align-items:center; justify-content:center;
+            box-shadow:0 4px 12px rgba(15,23,42,0.5); z-index:996; transition:all 0.3s; }
+
+        /* Shift Notes */
+        .shift-note-card { background:var(--primary-bg); border-radius:8px; padding:12px; margin-bottom:8px;
+            border-left:4px solid var(--active-color); }
+        .shift-note-card.priority-high { border-left-color:var(--high-severity); }
+        .shift-note-card.priority-urgent { border-left-color:var(--critical-severity); }
+        .shift-note-meta { font-size:0.75em; opacity:0.7; margin-bottom:4px; }
+        .shift-note-title { font-weight:bold; margin-bottom:4px; }
+        .shift-note-content { font-size:0.85em; line-height:1.4; }
+
+        /* SLA Timer */
+        .sla-timer { display:inline-block; padding:2px 6px; border-radius:4px; font-size:0.7em; font-weight:bold; font-family:monospace; }
+        .sla-green { background:rgba(34,197,94,0.2); color:#22c55e; }
+        .sla-yellow { background:rgba(245,158,11,0.2); color:#f59e0b; }
+        .sla-red { background:rgba(239,68,68,0.2); color:#ef4444; animation:pulse 1s infinite; }
+
+        /* Keyboard Shortcut Help Modal */
+        .shortcut-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85);
+            z-index:2000; display:none; justify-content:center; align-items:center; }
+        .shortcut-overlay.active { display:flex; }
+        .shortcut-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .shortcut-item { display:flex; gap:10px; align-items:center; padding:6px 10px; background:var(--primary-bg); border-radius:4px; }
+        .shortcut-key { display:inline-block; padding:3px 8px; background:var(--active-color); color:var(--primary-bg);
+            border-radius:4px; font-family:monospace; font-weight:bold; min-width:28px; text-align:center; }
+
+        /* Correlation Timeline */
+        .timeline-container { display:flex; align-items:flex-start; overflow-x:auto; padding:15px 0; gap:0; position:relative; }
+        .timeline-stage { flex:0 0 auto; text-align:center; position:relative; min-width:100px; }
+        .timeline-stage-label { font-size:0.65em; font-weight:bold; color:var(--active-color); margin-bottom:4px; white-space:nowrap; }
+        .timeline-node { width:14px; height:14px; border-radius:50%; margin:0 auto 4px; border:2px solid var(--border-color); }
+        .timeline-node.active { background:var(--active-color); border-color:var(--active-color); }
+        .timeline-node.critical { background:var(--critical-severity); border-color:var(--critical-severity); }
+        .timeline-node.high { background:var(--high-severity); border-color:var(--high-severity); }
+        .timeline-line { position:absolute; top:24px; left:50%; width:100%; height:2px; background:var(--border-color); z-index:-1; }
+        .timeline-events { font-size:0.65em; max-width:90px; overflow:hidden; }
+
+        /* Geo Map */
+        #geo-map { height:400px; border-radius:8px; border:1px solid var(--border-color); }
+        .geo-stats-sidebar { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; }
+        .geo-stat-card { background:var(--primary-bg); padding:8px; border-radius:6px; text-align:center; }
+
+        /* Widget Drag */
+        .metric-card[draggable="true"] { cursor:grab; }
+        .metric-card.dragging { opacity:0.5; }
+        .metric-card .drag-handle { cursor:grab; opacity:0.5; font-size:0.7em; }
+
+        /* Notification Sound Toggle */
+        .sound-toggle { font-size:0.9em; cursor:pointer; }
+
+        /* Data Source Health */
+        .datasource-item { display:flex; align-items:center; gap:8px; padding:4px 0; }
+        .datasource-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+        .datasource-dot.online { background:#22c55e; }
+        .datasource-dot.offline { background:#ef4444; }
+        .datasource-name { font-size:0.78em; flex:1; }
+        .datasource-latency { font-size:0.7em; opacity:0.7; }
+
+        /* Saved Searches */
+        .saved-search-dropdown { position:relative; display:inline-block; }
+        .saved-search-list { position:absolute; top:100%; left:0; background:var(--secondary-bg); border:1px solid var(--border-color);
+            border-radius:6px; min-width:200px; max-height:200px; overflow-y:auto; z-index:100; display:none; }
+        .saved-search-list.active { display:block; }
+        .saved-search-item { padding:6px 10px; cursor:pointer; font-size:0.8em; border-bottom:1px solid var(--border-color); }
+        .saved-search-item:hover { background:rgba(96,165,250,0.1); }
+
+        /* Component Theming */
+        .component-theme-btn { position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; border:none;
+            background:var(--border-color); cursor:pointer; font-size:9px; display:flex; align-items:center; justify-content:center;
+            opacity:0; transition:opacity 0.2s; z-index:5; }
+        .chart-container:hover .component-theme-btn, .data-table:hover .component-theme-btn,
+        .metric-card:hover .component-theme-btn { opacity:0.7; }
+        .component-light { background:#ffffff !important; color:#1e293b !important; border-color:#e2e8f0 !important; }
+        .component-light .chart-title, .component-light .metric-label { color:#3b82f6 !important; }
+        .component-light .metric-value { color:#1e40af !important; }
+
+        /* Export Buttons */
+        .export-bar { display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
+        .export-bar .btn { font-size:0.78em; }
     </style>
 </head>
 <body>
@@ -1410,6 +1631,12 @@
                             <span class="system-value" id="sys-processor">-</span>
                         </div>
                     </div>
+                    <div class="system-section">
+                        <div class="system-section-title">📡 Data Sources</div>
+                        <div id="datasource-health-list">
+                            <div style="font-size:0.8em;opacity:0.6;">Loading...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <!-- Notification Bell -->
@@ -1426,6 +1653,19 @@
                     </div>
                 </div>
             </div>
+            <!-- Sound Toggle -->
+            <button class="header-btn sound-toggle" id="sound-toggle-btn" onclick="toggleNotificationSound()" title="Toggle Alert Sounds">
+                🔇
+            </button>
+            <!-- User Info -->
+            <div id="user-info" style="display: none; margin-right: 10px;">
+                <span style="color: var(--text-color); font-size: 0.9em;" id="username-display"></span>
+                <span class="role-badge" id="role-badge"></span>
+            </div>
+            <!-- Logout Button -->
+            <button class="header-btn" id="logout-btn" onclick="logout()" title="Logout" style="display: none;">
+                🚪 Logout
+            </button>
             <!-- Theme Toggle -->
             <button class="header-btn" onclick="toggleTheme()" title="Toggle Theme">
                 <span id="theme-icon">🌙</span>
@@ -1449,6 +1689,9 @@
         <div class="nav-tab" onclick="switchTab('incidents')">📋 Incidents</div>
         <div class="nav-tab" onclick="switchTab('compliance')">✅ Compliance</div>
         <div class="nav-tab" onclick="switchTab('ai')">🤖 AI Learning</div>
+        <div class="nav-tab" onclick="switchTab('audit')">📝 Audit</div>
+        <div class="nav-tab" onclick="switchTab('shiftnotes')">📋 Shift Notes</div>
+        <div class="nav-tab" onclick="switchTab('geomap')">🌍 Geo Map</div>
     </div>
 
     <!-- Overview Tab -->
@@ -1504,6 +1747,18 @@
                 <div class="chart-title">Most Targeted Hosts</div>
                 <canvas id="hostsChart"></canvas>
             </div>
+        </div>
+
+        <!-- Export & Saved Searches Bar -->
+        <div class="export-bar">
+            <button class="btn" onclick="exportReport('threat')">📄 Threat Report</button>
+            <button class="btn" onclick="exportReport('compliance')">📊 Compliance Report</button>
+            <button class="btn" onclick="exportReport('incident')">📋 Incident Report</button>
+            <div class="saved-search-dropdown" style="margin-left:auto;">
+                <button class="btn btn-secondary" onclick="toggleSavedSearches()">💾 Saved Searches</button>
+                <div class="saved-search-list" id="saved-search-list"></div>
+            </div>
+            <button class="btn btn-secondary" onclick="saveCurrentSearch()">+ Save Search</button>
         </div>
 
         <!-- Log Search & Filter -->
@@ -1589,6 +1844,21 @@
             </div>
             <div id="alerts-container">
                 <div class="loading">Loading alerts...</div>
+            </div>
+        </div>
+
+        <!-- Attack Correlation Timeline -->
+        <div class="data-table" style="margin-top:10px;">
+            <div class="table-header">
+                <div class="table-title">Attack Correlation Timeline</div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <input type="text" id="timeline-host-input" placeholder="Enter hostname..."
+                        style="padding:4px 8px;background:var(--primary-bg);border:1px solid var(--border-color);border-radius:4px;color:var(--text-color);font-size:0.85em;width:150px;">
+                    <button class="btn" onclick="loadCorrelationTimeline(document.getElementById('timeline-host-input').value)">Load Timeline</button>
+                </div>
+            </div>
+            <div id="correlation-timeline-container">
+                <div style="text-align:center;padding:15px;opacity:0.7;font-size:0.85em;">Enter a hostname above to view the MITRE ATT&CK kill-chain timeline</div>
             </div>
         </div>
     </div>
@@ -1977,6 +2247,115 @@
         </div>
     </div>
 
+    <!-- Audit Tab -->
+    <div id="audit-tab" class="tab-content">
+        <h2 style="margin-bottom:8px; color:var(--active-color); font-size:1.1em;">📝 Audit Trail</h2>
+        <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center;">
+            <select id="audit-action-filter" style="padding:5px 8px; background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+                <option value="">All Actions</option>
+                <option value="login">Login</option>
+                <option value="severity_change">Severity Change</option>
+                <option value="create_incident">Create Incident</option>
+                <option value="role_change">Role Change</option>
+                <option value="triage_update">Triage Update</option>
+                <option value="bulk_triage">Bulk Triage</option>
+                <option value="create_shift_note">Shift Note</option>
+                <option value="export_report">Export Report</option>
+            </select>
+            <input type="text" id="audit-user-filter" placeholder="Username..."
+                style="padding:5px 8px; background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em; width:120px;">
+            <input type="date" id="audit-date-from"
+                style="padding:5px 8px; background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+            <input type="date" id="audit-date-to"
+                style="padding:5px 8px; background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+            <button class="btn" onclick="loadAuditLog()">Filter</button>
+            <button class="btn btn-secondary" onclick="clearAuditFilters()">Clear</button>
+        </div>
+        <div class="data-table">
+            <div id="audit-log-container">
+                <div class="loading">Loading audit log...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shift Notes Tab -->
+    <div id="shiftnotes-tab" class="tab-content">
+        <h2 style="margin-bottom:8px; color:var(--active-color); font-size:1.1em;">📋 Shift Handoff Notes</h2>
+        <div style="display:flex; gap:15px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:300px;">
+                <div style="background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:10px;">
+                    <h3 style="color:var(--active-color); font-size:0.95em; margin-bottom:8px;">Create New Note</h3>
+                    <input type="text" id="shift-note-title" placeholder="Note title..."
+                        style="width:100%; padding:6px 10px; margin-bottom:6px; background:var(--primary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+                    <textarea id="shift-note-content" placeholder="Handoff details, open items, observations..."
+                        rows="4" style="width:100%; padding:6px 10px; margin-bottom:6px; background:var(--primary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em; resize:vertical;"></textarea>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <select id="shift-note-priority" style="padding:5px 8px; background:var(--primary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+                            <option value="normal">Normal</option>
+                            <option value="high">High Priority</option>
+                            <option value="urgent">Urgent</option>
+                        </select>
+                        <select id="shift-note-period" style="padding:5px 8px; background:var(--primary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+                            <option value="day">Day Shift</option>
+                            <option value="night">Night Shift</option>
+                            <option value="swing">Swing Shift</option>
+                        </select>
+                        <button class="btn" onclick="createShiftNote()">Create Note</button>
+                    </div>
+                </div>
+                <div style="display:flex; gap:6px; margin-bottom:8px;">
+                    <input type="date" id="shift-date-filter"
+                        style="padding:5px 8px; background:var(--secondary-bg); border:1px solid var(--border-color); border-radius:4px; color:var(--text-color); font-size:0.85em;">
+                    <button class="btn btn-secondary" onclick="loadShiftNotes()">Filter</button>
+                </div>
+            </div>
+            <div style="flex:2; min-width:400px;">
+                <div id="shift-notes-container">
+                    <div class="loading">Loading shift notes...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Geo Map Tab -->
+    <div id="geomap-tab" class="tab-content">
+        <h2 style="margin-bottom:8px; color:var(--active-color); font-size:1.1em;">🌍 Geo-IP Alert Map</h2>
+        <div id="geo-map"></div>
+        <div class="geo-stats-sidebar" id="geo-stats-sidebar"></div>
+    </div>
+
+    <!-- Live Feed Panel (floating) -->
+    <button class="live-feed-toggle" id="live-feed-toggle" onclick="toggleLiveFeed()" title="Live Log Feed">📡</button>
+    <div class="live-feed-panel" id="live-feed-panel">
+        <div class="live-feed-header">
+            <span>📡 Live Log Feed</span>
+            <span style="cursor:pointer;" onclick="toggleLiveFeed()">×</span>
+        </div>
+        <div class="live-feed-body" id="live-feed-body"></div>
+    </div>
+
+    <!-- Keyboard Shortcuts Help Overlay -->
+    <div class="shortcut-overlay" id="shortcut-overlay">
+        <div class="modal-content" style="max-width:500px;">
+            <div class="modal-header">
+                <div class="modal-title">⌨️ Keyboard Shortcuts</div>
+                <div class="close-btn" onclick="toggleShortcutHelp()">&times;</div>
+            </div>
+            <div class="shortcut-grid">
+                <div class="shortcut-item"><span class="shortcut-key">J</span> Next log row</div>
+                <div class="shortcut-item"><span class="shortcut-key">K</span> Previous log row</div>
+                <div class="shortcut-item"><span class="shortcut-key">E</span> Escalate selected</div>
+                <div class="shortcut-item"><span class="shortcut-key">F</span> False positive</div>
+                <div class="shortcut-item"><span class="shortcut-key">A</span> Acknowledge selected</div>
+                <div class="shortcut-item"><span class="shortcut-key">I</span> Create incident</div>
+                <div class="shortcut-item"><span class="shortcut-key">R</span> Refresh data</div>
+                <div class="shortcut-item"><span class="shortcut-key">L</span> Toggle live feed</div>
+                <div class="shortcut-item"><span class="shortcut-key">/</span> Focus search</div>
+                <div class="shortcut-item"><span class="shortcut-key">?</span> Show this help</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Log Detail Modal -->
     <div id="logModal" class="modal">
         <div class="modal-content">
@@ -2000,6 +2379,74 @@
             <div id="briefingBody">
                 <div class="loading">Generating threat briefing...</div>
             </div>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal" style="display: flex;">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <div class="modal-title">🔐 SOC Agent Login</div>
+            </div>
+            <div style="padding: 20px;">
+                <form id="loginForm" onsubmit="handleLogin(event)">
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; color: var(--text-color); font-weight: 600;">Username</label>
+                        <input type="text" id="login-username" required
+                               style="width: 100%; padding: 10px; background: var(--primary-bg); border: 1px solid var(--border-color); border-radius: 5px; color: var(--text-color); font-size: 14px;">
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px; color: var(--text-color); font-weight: 600;">Password</label>
+                        <input type="password" id="login-password" required
+                               style="width: 100%; padding: 10px; background: var(--primary-bg); border: 1px solid var(--border-color); border-radius: 5px; color: var(--text-color); font-size: 14px;">
+                    </div>
+                    <div id="login-error" style="display: none; padding: 10px; margin-bottom: 15px; background: rgba(255, 77, 77, 0.1); border: 1px solid var(--high-severity); border-radius: 5px; color: var(--high-severity); font-size: 13px;"></div>
+                    <button type="submit" class="action-btn" style="width: 100%; background: var(--active-color); color: var(--primary-bg); padding: 12px; border: none; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 14px;">
+                        Login
+                    </button>
+                    <div style="margin-top: 15px; text-align: center; color: var(--text-color); font-size: 12px; opacity: 0.7;">
+                        Default credentials: admin / changeme
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Chatbot -->
+    <button class="action-chatbot-toggle" onclick="toggleActionChatbot()" title="Action Chatbot">
+        ⚡
+    </button>
+
+    <div id="actionChatbotPanel" class="action-chatbot-panel">
+        <div class="action-chat-header">
+            <span>⚡ Action Chatbot</span>
+            <span class="chat-close" onclick="toggleActionChatbot()">×</span>
+        </div>
+        <div class="action-context-bar" id="actionContextBar">
+            <span class="context-item">Tab: <strong id="context-tab">Logs</strong></span>
+            <span class="context-item" id="context-log-info" style="display: none;">
+                Log: <strong id="context-log-id">-</strong>
+            </span>
+        </div>
+        <div class="action-chat-body" id="actionChatBody">
+            <div class="action-chat-message action-chat-ai">
+                ⚡ <strong>Welcome to Action Chatbot!</strong><br><br>
+                I can execute actions via natural language. Try these commands:<br><br>
+                • "Change this to high severity"<br>
+                • "Mark as low severity"<br>
+                • "Create an incident from this log"<br>
+                • "What threats are active?"<br><br>
+                <em>Select a log to enable severity changes and incident creation.</em>
+            </div>
+        </div>
+        <div class="chat-input-container">
+            <input
+                type="text"
+                id="actionChatInput"
+                placeholder="Type an action command..."
+                onkeydown="if(event.key === 'Enter') sendActionMessage()"
+            >
+            <button onclick="sendActionMessage()">Execute</button>
         </div>
     </div>
 
@@ -2035,8 +2482,186 @@
         let currentLogs = [];
         let lastNotificationCheck = null;
 
+        // ============================================
+        // Authentication Management
+        // ============================================
+        function getAuthToken() {
+            return localStorage.getItem('access_token');
+        }
+
+        function getRefreshToken() {
+            return localStorage.getItem('refresh_token');
+        }
+
+        function setAuthTokens(accessToken, refreshToken, user) {
+            localStorage.setItem('access_token', accessToken);
+            localStorage.setItem('refresh_token', refreshToken);
+            localStorage.setItem('user', JSON.stringify(user));
+            updateUserDisplay(user);
+        }
+
+        function clearAuthTokens() {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('user');
+        }
+
+        function updateUserDisplay(user) {
+            if (user) {
+                document.getElementById('username-display').textContent = user.username;
+                document.getElementById('user-info').style.display = 'block';
+                document.getElementById('logout-btn').style.display = 'block';
+                document.getElementById('loginModal').style.display = 'none';
+                // Apply role
+                const role = user.role || (user.is_admin ? 'admin' : 'analyst');
+                const badge = document.getElementById('role-badge');
+                if (badge) {
+                    badge.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+                    badge.className = 'role-badge role-' + role;
+                }
+            } else {
+                document.getElementById('user-info').style.display = 'none';
+                document.getElementById('logout-btn').style.display = 'none';
+            }
+        }
+
+        function showLoginModal() {
+            document.getElementById('loginModal').style.display = 'flex';
+            document.getElementById('login-error').style.display = 'none';
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            const errorDiv = document.getElementById('login-error');
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    setAuthTokens(data.access_token, data.refresh_token, data.user);
+                    document.getElementById('loginForm').reset();
+                    loadData(); // Reload dashboard data
+                } else {
+                    errorDiv.textContent = data.detail || 'Login failed';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                errorDiv.textContent = 'Network error. Please try again.';
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function logout() {
+            const token = getAuthToken();
+            if (token) {
+                try {
+                    await fetch(`${API_BASE}/auth/logout`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                } catch (error) {
+                    console.error('Logout error:', error);
+                }
+            }
+            clearAuthTokens();
+            showLoginModal();
+        }
+
+        async function refreshAccessToken() {
+            const refreshToken = getRefreshToken();
+            if (!refreshToken) {
+                showLoginModal();
+                return null;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    setAuthTokens(data.access_token, data.refresh_token, data.user);
+                    return data.access_token;
+                } else {
+                    clearAuthTokens();
+                    showLoginModal();
+                    return null;
+                }
+            } catch (error) {
+                console.error('Token refresh error:', error);
+                clearAuthTokens();
+                showLoginModal();
+                return null;
+            }
+        }
+
+        async function fetchWithAuth(url, options = {}) {
+            let token = getAuthToken();
+
+            if (!token) {
+                showLoginModal();
+                throw new Error('Not authenticated');
+            }
+
+            options.headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            };
+
+            let response = await fetch(url, options);
+
+            // If unauthorized, try to refresh token
+            if (response.status === 401) {
+                token = await refreshAccessToken();
+                if (token) {
+                    options.headers['Authorization'] = `Bearer ${token}`;
+                    response = await fetch(url, options);
+                } else {
+                    throw new Error('Authentication failed');
+                }
+            }
+
+            return response;
+        }
+
+        // Check authentication on load
+        function checkAuth() {
+            const token = getAuthToken();
+            const userStr = localStorage.getItem('user');
+
+            if (token && userStr) {
+                try {
+                    const user = JSON.parse(userStr);
+                    updateUserDisplay(user);
+                } catch (error) {
+                    clearAuthTokens();
+                    showLoginModal();
+                }
+            } else {
+                showLoginModal();
+            }
+        }
+
         // Initialize Dashboard
         window.onload = () => {
+            checkAuth();
             // Restore theme from localStorage
             const savedTheme = localStorage.getItem('theme');
             if (savedTheme === 'light') {
@@ -2080,8 +2705,8 @@
 
         function updateChartsTheme() {
             const isLight = document.documentElement.classList.contains('light-mode');
-            const textColor = isLight ? '#1c2132' : '#e0e0e0';
-            const gridColor = isLight ? '#d0d4dc' : '#3b4257';
+            const textColor = isLight ? '#1E293B' : '#E2E8F0';
+            const gridColor = isLight ? '#CBD5E1' : '#334155';
 
             Object.values(charts).forEach(chart => {
                 if (chart.options.scales) {
@@ -2517,7 +3142,7 @@
             columns.forEach(column => {
                 column.addEventListener('dragover', (e) => {
                     e.preventDefault();
-                    column.style.background = 'rgba(0, 255, 115, 0.1)';
+                    column.style.background = 'rgba(96, 165, 250, 0.08)';
                 });
 
                 column.addEventListener('dragleave', () => {
@@ -2576,6 +3201,9 @@
             event.target.classList.add('active');
             document.getElementById(`${tab}-tab`).classList.add('active');
 
+            // Update action chatbot context
+            updateActionChatContext({ current_tab: tab });
+
             // Load tab-specific data
             if (tab === 'threats') loadCorrelatedEvents();
             if (tab === 'timeline') loadTimeline();
@@ -2585,6 +3213,9 @@
             if (tab === 'incidents') loadIncidentsKanban();
             if (tab === 'compliance') { loadCompliance(); loadSOCMetrics(); }
             if (tab === 'ai') loadAIStats();
+            if (tab === 'audit') loadAuditLog();
+            if (tab === 'shiftnotes') loadShiftNotes();
+            if (tab === 'geomap') loadGeoMap();
         }
 
         // ============================================
@@ -2728,7 +3359,7 @@
                         datasets: [{
                             label: 'Avg Processing Time (ms)',
                             data: byAnalyzer.map(a => a.avg_ms),
-                            backgroundColor: ['#ff6384', '#00ff73', '#36a2eb', '#ffce56'],
+                            backgroundColor: ['#EF4444', '#60A5FA', '#3B82F6', '#F59E0B'],
                             borderWidth: 0
                         }]
                     },
@@ -2737,8 +3368,8 @@
                         maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#e0e0e0' } },
-                            x: { grid: { display: false }, ticks: { color: '#e0e0e0' } }
+                            y: { beginAtZero: true, grid: { color: 'rgba(51, 65, 85, 0.5)' }, ticks: { color: '#E2E8F0' } },
+                            x: { grid: { display: false }, ticks: { color: '#E2E8F0' } }
                         }
                     }
                 });
@@ -2754,8 +3385,8 @@
                         datasets: [{
                             label: 'Processing Time (ms)',
                             data: recent.map(r => r.processing_time_ms).reverse(),
-                            borderColor: '#00ff73',
-                            backgroundColor: 'rgba(0, 255, 115, 0.1)',
+                            borderColor: '#60A5FA',
+                            backgroundColor: 'rgba(96, 165, 250, 0.1)',
                             fill: true,
                             tension: 0.3,
                             pointRadius: 2
@@ -2766,8 +3397,8 @@
                         maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#e0e0e0' } },
-                            x: { grid: { display: false }, ticks: { color: '#e0e0e0' } }
+                            y: { beginAtZero: true, grid: { color: 'rgba(51, 65, 85, 0.5)' }, ticks: { color: '#E2E8F0' } },
+                            x: { grid: { display: false }, ticks: { color: '#E2E8F0' } }
                         }
                     }
                 });
@@ -2823,7 +3454,7 @@
                     maintainAspectRatio: true,
                     plugins: {
                         legend: {
-                            labels: { color: '#e0e0e0' }
+                            labels: { color: '#E2E8F0' }
                         }
                     }
                 }
@@ -2837,7 +3468,7 @@
                     datasets: [{
                         label: 'Count',
                         data: [],
-                        backgroundColor: '#00ff73'
+                        backgroundColor: '#60A5FA'
                     }]
                 },
                 options: {
@@ -2846,12 +3477,12 @@
                     scales: {
                         y: {
                             beginAtZero: true,
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         },
                         x: {
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         }
                     },
                     plugins: {
@@ -2868,8 +3499,8 @@
                     datasets: [{
                         label: 'Events',
                         data: [],
-                        borderColor: '#00ff73',
-                        backgroundColor: 'rgba(0, 255, 115, 0.1)',
+                        borderColor: '#60A5FA',
+                        backgroundColor: 'rgba(96, 165, 250, 0.1)',
                         tension: 0.4
                     }]
                 },
@@ -2879,17 +3510,17 @@
                     scales: {
                         y: {
                             beginAtZero: true,
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         },
                         x: {
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         }
                     },
                     plugins: {
                         legend: {
-                            labels: { color: '#e0e0e0' }
+                            labels: { color: '#E2E8F0' }
                         }
                     }
                 }
@@ -2913,12 +3544,12 @@
                     scales: {
                         x: {
                             beginAtZero: true,
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         },
                         y: {
-                            ticks: { color: '#e0e0e0' },
-                            grid: { color: '#3b4257' }
+                            ticks: { color: '#E2E8F0' },
+                            grid: { color: '#334155' }
                         }
                     },
                     plugins: {
@@ -2940,7 +3571,7 @@
         // Load Metrics
         async function loadMetrics() {
             try {
-                const response = await fetch(`${API_BASE}/dashboard-metrics`);
+                const response = await fetchWithAuth(`${API_BASE}/dashboard-metrics`);
                 const data = await response.json();
 
                 document.getElementById('total-logs').textContent = data.total_logs || 0;
@@ -2956,7 +3587,7 @@
         // Load Threat Statistics
         async function loadThreatStatistics() {
             try {
-                const response = await fetch(`${API_BASE}/threat-statistics`);
+                const response = await fetchWithAuth(`${API_BASE}/threat-statistics`);
                 const data = await response.json();
 
                 // Update Severity Chart
@@ -3030,7 +3661,7 @@
                 params.append('limit', pageSize);
                 params.append('offset', currentPage * pageSize);
 
-                const response = await fetch(`${API_BASE}/logs-search?${params.toString()}`);
+                const response = await fetchWithAuth(`${API_BASE}/logs-search?${params.toString()}`);
                 const data = await response.json();
 
                 currentLogs = data.logs || [];
@@ -3100,9 +3731,19 @@
                 return;
             }
 
-            let html = `<table>
+            // Triage toolbar
+            let html = `<div class="triage-toolbar">
+                <span class="triage-count"><span id="triage-selected-count">0</span> selected</span>
+                <button class="btn" onclick="bulkTriageAction('acknowledged')" style="background:#22c55e;">Acknowledge</button>
+                <button class="btn" onclick="bulkTriageAction('escalated')" style="background:#f59e0b;color:#1e293b;">Escalate</button>
+                <button class="btn" onclick="bulkTriageAction('false_positive')" style="background:#6b7280;">False Positive</button>
+                <input type="text" id="triage-assign-to" placeholder="Assign to..." style="padding:4px 8px;width:100px;background:var(--secondary-bg);border:1px solid var(--border-color);border-radius:4px;color:var(--text-color);font-size:0.8em;">
+            </div>`;
+
+            html += `<table>
                 <thead>
                     <tr>
+                        <th style="width:30px;"><input type="checkbox" class="triage-checkbox" onchange="selectAllTriage(this)"></th>
                         <th>ID</th>
                         <th>Severity</th>
                         <th>Host</th>
@@ -3110,11 +3751,13 @@
                         <th>Event Type</th>
                         <th>Analyzer</th>
                         <th>Time (ms)</th>
+                        <th>SLA</th>
                         <th>Summary</th>
                     </tr>
                 </thead>
                 <tbody>`;
 
+            selectedTriageIds.clear();
             currentLogs.forEach((log, index) => {
                 const severity = log.Severity || 'Unknown';
                 const severityClass = severity.toLowerCase();
@@ -3124,8 +3767,10 @@
                 const analyzerBadge = analyzer === 'llm' ? 'badge-high' :
                                       analyzer === 'knowledge_base' ? 'badge-low' :
                                       analyzer === 'conditional_rule' ? 'badge-medium' : '';
+                const slaHtml = getSLATimerHTML(severity, log.Timestamp);
 
                 html += `<tr onclick="showLogDetail(${index})" style="cursor: pointer;">
+                    <td onclick="event.stopPropagation()"><input type="checkbox" class="triage-checkbox" data-log-id="${log.TLID}" onchange="toggleTriageSelect(${log.TLID}, this)"></td>
                     <td>${log.TLID}</td>
                     <td><span class="badge badge-${severityClass}">${severity}</span></td>
                     <td>${log.HOST || 'N/A'}</td>
@@ -3133,6 +3778,7 @@
                     <td>${log['Event Type'] || 'N/A'}</td>
                     <td><span class="badge ${analyzerBadge}" style="font-size: 0.75em;">${analyzer}</span></td>
                     <td>${processingTime !== null ? processingTime : '-'}</td>
+                    <td>${slaHtml}</td>
                     <td title="${log['AI Summary'] || ''}">${(log['AI Summary'] || '').substring(0, 60)}${(log['AI Summary'] || '').length > 60 ? '...' : ''}</td>
                 </tr>`;
             });
@@ -3146,6 +3792,14 @@
             const log = currentLogs[index];
             const modal = document.getElementById('logModal');
             const modalBody = document.getElementById('modalBody');
+
+            // Update action chatbot context
+            updateActionChatContext({
+                log_id: log.TLID,
+                host: log.HOST || '',
+                severity: log.Severity || '',
+                ip: log.source_ip || ''
+            });
 
             modalBody.innerHTML = '<div class="loading"><div class="spinner"></div>Loading enrichment data...</div>';
             modal.classList.add('active');
@@ -3168,64 +3822,16 @@
                             <div class="enrichment-label">🆔 Log ID</div>
                             <div class="enrichment-value">${log.TLID}</div>
                         </div>
-                        <div class="enrichment-card" style="grid-column: span 2;">
-                            <div class="enrichment-label">⚠️ Adjust Severity (AI will learn from this)</div>
+                        <div class="enrichment-card">
+                            <div class="enrichment-label">⚠️ Current Severity</div>
                             <div class="enrichment-value" id="severity-display">
                                 <span class="badge badge-${(log.Severity || '').toLowerCase()}">${log.Severity || 'Unknown'}</span>
                             </div>
-                            <div class="severity-buttons">
-                                <button class="severity-btn low ${currentSeverity === 'low' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Low', '${log.HOST || ''}')">Low</button>
-                                <button class="severity-btn medium ${currentSeverity === 'medium' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Medium', '${log.HOST || ''}')">Medium</button>
-                                <button class="severity-btn high ${currentSeverity === 'high' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'High', '${log.HOST || ''}')">High</button>
-                                <button class="severity-btn critical ${currentSeverity === 'critical' ? 'active' : ''}" onclick="selectSeverity(${log.TLID}, 'Critical', '${log.HOST || ''}')">Critical</button>
-                            </div>
-
-                            <!-- Conditional Options -->
-                            <div style="margin-top: 15px;">
-                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9em;">
-                                    <input type="checkbox" id="show-conditions" onchange="toggleConditions()">
-                                    Show advanced conditions (host-specific, time-limited, etc.)
-                                </label>
-                            </div>
-
-                            <div id="condition-options" style="display: none; margin-top: 15px; padding: 15px; background: var(--primary-bg); border-radius: 8px; border: 1px solid var(--border-color);">
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                                    <div>
-                                        <label style="font-size: 0.85em; opacity: 0.8;">Apply only to hosts (comma-separated):</label>
-                                        <input type="text" id="cond-host-filter" placeholder="e.g., web-server-01, db-primary"
-                                               value="${log.HOST || ''}"
-                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                                    </div>
-                                    <div>
-                                        <label style="font-size: 0.85em; opacity: 0.8;">Apply only to IPs (comma-separated):</label>
-                                        <input type="text" id="cond-ip-filter" placeholder="e.g., 192.168.1.100"
-                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                                    </div>
-                                    <div>
-                                        <label style="font-size: 0.85em; opacity: 0.8;">Exclude hosts from this rule:</label>
-                                        <input type="text" id="cond-exclude-hosts" placeholder="e.g., critical-server-01"
-                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                                    </div>
-                                    <div>
-                                        <label style="font-size: 0.85em; opacity: 0.8;">Rule expires in (days):</label>
-                                        <input type="number" id="cond-expires-days" placeholder="e.g., 30 (leave empty for permanent)"
-                                               min="1" max="365"
-                                               style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color);">
-                                    </div>
-                                </div>
-                                <div style="margin-top: 12px;">
-                                    <label style="font-size: 0.85em; opacity: 0.8;">Reason for adjustment:</label>
-                                    <textarea id="cond-reason" placeholder="e.g., Known maintenance window, expected behavior, false positive for this environment"
-                                              style="width: 100%; padding: 8px; margin-top: 4px; background: var(--secondary-bg); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); min-height: 60px; resize: vertical;"></textarea>
-                                </div>
-                                <div style="margin-top: 15px; text-align: right;">
-                                    <button class="btn" id="apply-conditions-btn" onclick="applyConditionalSeverity()" style="display: none;">
-                                        Apply Conditional Rule
-                                    </button>
+                            <div style="margin-top: 10px; padding: 10px; background: rgba(102, 126, 234, 0.1); border-radius: 6px; border: 1px solid rgba(102, 126, 234, 0.3);">
+                                <div style="font-size: 0.85em; opacity: 0.9;">
+                                    ⚡ To change severity, use the <strong>Action Chatbot</strong> (purple button)
                                 </div>
                             </div>
-
-                            <div class="learn-message" id="learn-message"></div>
                         </div>
                         <div class="enrichment-card">
                             <div class="enrichment-label">🖥️ Host</div>
@@ -3674,7 +4280,7 @@
             if (!confirm('Create a new incident from this alert?')) return;
 
             try {
-                const response = await fetch(`${API_BASE}/create-incident`, {
+                const response = await fetchWithAuth(`${API_BASE}/create-incident`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -3739,10 +4345,123 @@
             if (e.key === 'Escape') closeModal();
         });
 
+        // Action Chatbot Context
+        let actionChatContext = {
+            current_tab: 'logs',
+            log_id: null,
+            host: '',
+            severity: '',
+            ip: ''
+        };
+
         // Toggle Chatbot
         function toggleChatbot() {
             const panel = document.getElementById('chatbotPanel');
             panel.classList.toggle('active');
+        }
+
+        // Toggle Action Chatbot
+        function toggleActionChatbot() {
+            const panel = document.getElementById('actionChatbotPanel');
+            panel.classList.toggle('active');
+        }
+
+        // Update Action Chatbot Context
+        function updateActionChatContext(updates) {
+            Object.assign(actionChatContext, updates);
+
+            // Update context bar display
+            document.getElementById('context-tab').textContent = actionChatContext.current_tab || 'logs';
+
+            if (actionChatContext.log_id) {
+                document.getElementById('context-log-info').style.display = 'inline-block';
+                document.getElementById('context-log-id').textContent = `#${actionChatContext.log_id}`;
+            } else {
+                document.getElementById('context-log-info').style.display = 'none';
+            }
+
+            console.log('Action chat context updated:', actionChatContext);
+        }
+
+        // Send Action Message
+        async function sendActionMessage() {
+            const inputField = document.getElementById('actionChatInput');
+            const chatBody = document.getElementById('actionChatBody');
+            const message = inputField.value.trim();
+
+            if (!message) return;
+
+            // Add user message
+            const userMsg = document.createElement('div');
+            userMsg.className = 'action-chat-message action-chat-user';
+            userMsg.textContent = message;
+            chatBody.appendChild(userMsg);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            inputField.value = '';
+
+            // Add typing indicator
+            const typingMsg = document.createElement('div');
+            typingMsg.className = 'action-chat-message action-chat-ai';
+            typingMsg.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            chatBody.appendChild(typingMsg);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            try {
+                const response = await fetchWithAuth(`${API_BASE}/action-chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        context: actionChatContext
+                    })
+                });
+
+                const data = await response.json();
+
+                // Format response
+                let responseHTML = formatAIResponse(data.response_text || 'Sorry, I could not process your request.');
+
+                // Add action result badge if action was executed
+                if (data.action_executed) {
+                    let actionType = data.action_type || 'unknown';
+                    let badgeText = '';
+
+                    if (actionType === 'change_severity') {
+                        badgeText = `✅ Severity changed to ${data.action_result.new_severity}`;
+                    } else if (actionType === 'create_incident') {
+                        badgeText = `✅ Incident #${data.action_result.incident_id} created`;
+                    } else {
+                        badgeText = '✅ Action executed';
+                    }
+
+                    responseHTML += `<div class="action-result-badge">${badgeText}</div>`;
+
+                    // Refresh data if severity was changed
+                    if (actionType === 'change_severity') {
+                        setTimeout(() => {
+                            loadLogs();
+                            loadMetrics();
+                        }, 1000);
+                    } else if (actionType === 'create_incident') {
+                        setTimeout(() => {
+                            if (actionChatContext.current_tab === 'incidents') {
+                                loadIncidentsKanban();
+                            }
+                        }, 1000);
+                    }
+                }
+
+                typingMsg.innerHTML = responseHTML;
+
+            } catch (error) {
+                console.error('Action chat error:', error);
+                typingMsg.innerHTML = '⚠️ Error: Could not connect to Action Chatbot service. Please check if the server is running.';
+                typingMsg.style.backgroundColor = 'var(--high-severity)';
+                typingMsg.style.color = 'white';
+            }
+
+            chatBody.scrollTop = chatBody.scrollHeight;
         }
 
         // Format AI Response
@@ -3807,7 +4526,7 @@
             chatBody.scrollTop = chatBody.scrollHeight;
 
             try {
-                const response = await fetch(`${API_BASE}/chat`, {
+                const response = await fetchWithAuth(`${API_BASE}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: message })
@@ -3877,9 +4596,8 @@
             const learnMsg = document.getElementById('learn-message');
 
             try {
-                const response = await fetch(`${API_BASE}/learn`, {
+                const response = await fetchWithAuth(`${API_BASE}/learn`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         log_id: logId,
                         new_severity: newSeverity,
@@ -3930,9 +4648,8 @@
                            `Conditional severity adjustment to ${selectedSeverity}`;
 
             try {
-                const response = await fetch(`${API_BASE}/learn-conditional`, {
+                const response = await fetchWithAuth(`${API_BASE}/learn-conditional`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         log_id: selectedLogId,
                         new_severity: selectedSeverity,
@@ -3954,7 +4671,7 @@
                     if (excludeHosts) msg += ` (excludes: ${excludeHosts})`;
 
                     learnMsg.innerHTML = msg;
-                    learnMsg.style.backgroundColor = 'rgba(0, 255, 115, 0.1)';
+                    learnMsg.style.backgroundColor = 'rgba(96, 165, 250, 0.08)';
                     learnMsg.style.borderColor = 'var(--active-color)';
                     learnMsg.classList.add('show');
 
@@ -4022,6 +4739,568 @@
                 }
             });
         })();
+
+        // ============================================
+        // Professional Feature Functions
+        // ============================================
+
+        // --- Role-Based Views ---
+        let currentUserRole = 'analyst';
+        function applyRoleVisibility(role) {
+            currentUserRole = role;
+            const badge = document.getElementById('role-badge');
+            if (badge) {
+                badge.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+                badge.className = 'role-badge role-' + role;
+            }
+            document.querySelectorAll('[data-role]').forEach(el => {
+                const allowed = el.dataset.role.split(',');
+                el.style.display = allowed.includes(role) ? '' : 'none';
+            });
+        }
+
+        // --- Audit Log ---
+        async function loadAuditLog() {
+            const action = document.getElementById('audit-action-filter')?.value || '';
+            const username = document.getElementById('audit-user-filter')?.value || '';
+            const dateFrom = document.getElementById('audit-date-from')?.value || '';
+            const dateTo = document.getElementById('audit-date-to')?.value || '';
+            try {
+                const params = new URLSearchParams();
+                if (action) params.append('action', action);
+                if (username) params.append('username', username);
+                if (dateFrom) params.append('date_from', dateFrom);
+                if (dateTo) params.append('date_to', dateTo);
+                const url = `${API_BASE}/audit-log${params.toString() ? '?' + params : ''}`;
+                const res = await fetchWithAuth(url);
+                const data = await res.json();
+                const container = document.getElementById('audit-log-container');
+                if (!data.logs || data.logs.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.7;">No audit log entries found</div>';
+                    return;
+                }
+                container.innerHTML = `<table><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th><th>IP</th></tr>
+                    ${data.logs.map(l => `<tr>
+                        <td style="white-space:nowrap;">${l.created_at ? new Date(l.created_at).toLocaleString() : '-'}</td>
+                        <td>${l.username || '-'}</td>
+                        <td><span class="badge" style="background:var(--active-color);color:var(--primary-bg)">${l.action || '-'}</span></td>
+                        <td>${l.entity_type ? l.entity_type + (l.entity_id ? '#' + l.entity_id : '') : '-'}</td>
+                        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${l.details || '-'}</td>
+                        <td>${l.ip_address || '-'}</td>
+                    </tr>`).join('')}</table>`;
+            } catch (e) { console.error('Audit log error:', e); }
+        }
+        function clearAuditFilters() {
+            ['audit-action-filter','audit-user-filter','audit-date-from','audit-date-to'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            loadAuditLog();
+        }
+
+        // --- Alert Triage ---
+        let selectedTriageIds = new Set();
+        function toggleTriageSelect(logId, checkbox) {
+            if (checkbox.checked) selectedTriageIds.add(logId);
+            else selectedTriageIds.delete(logId);
+            document.getElementById('triage-selected-count').textContent = selectedTriageIds.size;
+        }
+        function selectAllTriage(masterCheckbox) {
+            document.querySelectorAll('.triage-checkbox').forEach(cb => {
+                cb.checked = masterCheckbox.checked;
+                const logId = parseInt(cb.dataset.logId);
+                if (masterCheckbox.checked) selectedTriageIds.add(logId);
+                else selectedTriageIds.delete(logId);
+            });
+            document.getElementById('triage-selected-count').textContent = selectedTriageIds.size;
+        }
+        async function bulkTriageAction(action) {
+            if (selectedTriageIds.size === 0) { showToast('Select alerts first', 'warning'); return; }
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/triage/bulk-action`, {
+                    method: 'POST',
+                    body: JSON.stringify({ log_ids: Array.from(selectedTriageIds), action })
+                });
+                if (res.ok) {
+                    showToast(`${selectedTriageIds.size} alerts ${action}`, 'success');
+                    selectedTriageIds.clear();
+                    searchLogs();
+                }
+            } catch (e) { console.error('Bulk triage error:', e); }
+        }
+
+        // --- Live Log Feed ---
+        let liveFeedInterval = null;
+        let lastFeedId = 0;
+        function toggleLiveFeed() {
+            const panel = document.getElementById('live-feed-panel');
+            const toggle = document.getElementById('live-feed-toggle');
+            if (panel.classList.contains('active')) {
+                panel.classList.remove('active');
+                toggle.style.display = 'flex';
+                if (liveFeedInterval) { clearInterval(liveFeedInterval); liveFeedInterval = null; }
+            } else {
+                panel.classList.add('active');
+                toggle.style.display = 'none';
+                loadLiveFeed();
+                liveFeedInterval = setInterval(loadLiveFeed, 2000);
+            }
+        }
+        async function loadLiveFeed() {
+            try {
+                const res = await fetch(`${API_BASE}/info-logs?since_id=${lastFeedId}`);
+                const data = await res.json();
+                if (data.length > 0) {
+                    lastFeedId = Math.max(...data.map(d => d.id));
+                    const body = document.getElementById('live-feed-body');
+                    data.reverse().forEach(entry => {
+                        const div = document.createElement('div');
+                        div.className = 'live-feed-entry';
+                        const sevColor = entry.severity === 'Critical' ? '#dc2626' : entry.severity === 'High' ? '#ef4444' :
+                            entry.severity === 'Medium' ? '#f59e0b' : entry.severity === 'Info' ? '#6ee7b7' : '#94a3b8';
+                        div.innerHTML = `<span style="color:${sevColor};font-weight:bold;">[${entry.severity}]</span> ${entry.host} - ${entry.raw_log}`;
+                        body.appendChild(div);
+                    });
+                    body.scrollTop = body.scrollHeight;
+                    // Trim old entries
+                    while (body.children.length > 200) body.removeChild(body.firstChild);
+                }
+            } catch (e) { /* silent */ }
+        }
+
+        // --- Shift Notes ---
+        async function loadShiftNotes() {
+            const dateFilter = document.getElementById('shift-date-filter')?.value || '';
+            try {
+                const params = dateFilter ? `?date=${dateFilter}` : '';
+                const res = await fetchWithAuth(`${API_BASE}/shift-notes${params}`);
+                const notes = await res.json();
+                const container = document.getElementById('shift-notes-container');
+                if (!notes || notes.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.7;">No shift notes found</div>';
+                    return;
+                }
+                container.innerHTML = notes.map(n => `
+                    <div class="shift-note-card priority-${n.priority}">
+                        <div class="shift-note-meta">
+                            ${n.author} | ${n.shift_date} ${n.shift_period} shift |
+                            ${n.created_at ? new Date(n.created_at).toLocaleString() : ''}
+                            ${n.priority !== 'normal' ? ` | <span style="color:var(--high-severity);font-weight:bold;">${n.priority.toUpperCase()}</span>` : ''}
+                        </div>
+                        <div class="shift-note-title">${n.title}</div>
+                        <div class="shift-note-content">${n.content}</div>
+                        <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+                            ${n.acknowledged_by ? `<span style="font-size:0.75em;color:var(--low-severity);">Acknowledged by: ${n.acknowledged_by}</span>` :
+                            `<button class="btn" style="font-size:0.7em;padding:3px 8px;" onclick="acknowledgeNote(${n.id})">Acknowledge</button>`}
+                            <button class="btn btn-secondary" style="font-size:0.7em;padding:3px 8px;" onclick="deleteShiftNote(${n.id})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) { console.error('Shift notes error:', e); }
+        }
+        async function createShiftNote() {
+            const title = document.getElementById('shift-note-title').value.trim();
+            const content = document.getElementById('shift-note-content').value.trim();
+            const priority = document.getElementById('shift-note-priority').value;
+            const period = document.getElementById('shift-note-period').value;
+            if (!title || !content) { showToast('Title and content required', 'warning'); return; }
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/shift-notes`, {
+                    method: 'POST',
+                    body: JSON.stringify({ title, content, priority, shift_period: period })
+                });
+                if (res.ok) {
+                    showToast('Shift note created', 'success');
+                    document.getElementById('shift-note-title').value = '';
+                    document.getElementById('shift-note-content').value = '';
+                    loadShiftNotes();
+                }
+            } catch (e) { console.error('Create shift note error:', e); }
+        }
+        async function acknowledgeNote(noteId) {
+            try {
+                await fetchWithAuth(`${API_BASE}/shift-notes/${noteId}/acknowledge`, { method: 'POST' });
+                showToast('Note acknowledged', 'success');
+                loadShiftNotes();
+            } catch (e) { console.error('Acknowledge error:', e); }
+        }
+        async function deleteShiftNote(noteId) {
+            if (!confirm('Delete this shift note?')) return;
+            try {
+                await fetchWithAuth(`${API_BASE}/shift-notes/${noteId}`, { method: 'DELETE' });
+                showToast('Note deleted', 'success');
+                loadShiftNotes();
+            } catch (e) { console.error('Delete shift note error:', e); }
+        }
+
+        // --- Export Reports ---
+        async function exportReport(type) {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/export/report`, {
+                    method: 'POST',
+                    body: JSON.stringify({ type })
+                });
+                const html = await res.text();
+                const win = window.open('', '_blank');
+                win.document.write(html);
+                win.document.close();
+                showToast(`${type} report generated`, 'success');
+            } catch (e) { console.error('Export error:', e); showToast('Export failed', 'error'); }
+        }
+
+        // --- SLA Countdown Timers ---
+        let slaConfig = { Critical: 15, High: 60, Medium: 240, Low: 1440 };
+        async function loadSLAConfig() {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/sla-config`);
+                const data = await res.json();
+                slaConfig = data;
+            } catch (e) { /* use defaults */ }
+        }
+        function getSLATimerHTML(severity, createdAt) {
+            if (!createdAt || !slaConfig[severity]) return '';
+            const limitMin = slaConfig[severity];
+            const created = new Date(createdAt);
+            const deadline = new Date(created.getTime() + limitMin * 60000);
+            const remaining = deadline - Date.now();
+            const pct = remaining / (limitMin * 60000);
+            if (remaining <= 0) return '<span class="sla-timer sla-red">OVERDUE</span>';
+            const mins = Math.floor(remaining / 60000);
+            const hrs = Math.floor(mins / 60);
+            const display = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+            const cls = pct > 0.5 ? 'sla-green' : pct > 0.25 ? 'sla-yellow' : 'sla-red';
+            return `<span class="sla-timer ${cls}">${display}</span>`;
+        }
+        loadSLAConfig();
+
+        // --- Keyboard Shortcuts ---
+        let focusedLogRow = -1;
+        function toggleShortcutHelp() {
+            document.getElementById('shortcut-overlay').classList.toggle('active');
+        }
+        document.addEventListener('keydown', function(e) {
+            const tag = e.target.tagName.toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            switch (e.key) {
+                case '?': e.preventDefault(); toggleShortcutHelp(); break;
+                case 'j': case 'J':
+                    e.preventDefault();
+                    navigateLogRow(1);
+                    break;
+                case 'k': case 'K':
+                    e.preventDefault();
+                    navigateLogRow(-1);
+                    break;
+                case 'e': case 'E':
+                    e.preventDefault();
+                    if (selectedTriageIds.size > 0) bulkTriageAction('escalated');
+                    break;
+                case 'f':
+                    e.preventDefault();
+                    if (selectedTriageIds.size > 0) bulkTriageAction('false_positive');
+                    break;
+                case 'a':
+                    e.preventDefault();
+                    if (selectedTriageIds.size > 0) bulkTriageAction('acknowledged');
+                    break;
+                case 'i': case 'I':
+                    e.preventDefault();
+                    // Create incident from focused row
+                    if (focusedLogRow >= 0) {
+                        const rows = document.querySelectorAll('#logs-container table tbody tr');
+                        if (rows[focusedLogRow]) rows[focusedLogRow].click();
+                    }
+                    break;
+                case 'r': case 'R':
+                    e.preventDefault();
+                    searchLogs();
+                    break;
+                case 'l':
+                    e.preventDefault();
+                    toggleLiveFeed();
+                    break;
+                case '/':
+                    e.preventDefault();
+                    document.getElementById('search-query')?.focus();
+                    break;
+            }
+        });
+        function navigateLogRow(dir) {
+            const rows = document.querySelectorAll('#logs-container table tbody tr');
+            if (rows.length === 0) return;
+            if (focusedLogRow >= 0 && rows[focusedLogRow]) rows[focusedLogRow].style.outline = '';
+            focusedLogRow = Math.max(0, Math.min(rows.length - 1, focusedLogRow + dir));
+            if (rows[focusedLogRow]) {
+                rows[focusedLogRow].style.outline = '2px solid var(--active-color)';
+                rows[focusedLogRow].scrollIntoView({ block: 'nearest' });
+            }
+        }
+
+        // --- Correlation Timeline ---
+        async function loadCorrelationTimeline(host) {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/correlation-timeline/${encodeURIComponent(host)}`);
+                const data = await res.json();
+                const container = document.getElementById('correlation-timeline-container');
+                if (!container) return;
+                if (!data.events || data.events.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;opacity:0.7;padding:10px;">No events for this host</div>';
+                    return;
+                }
+                const stages = data.stages;
+                const stageEvents = {};
+                data.events.forEach(ev => {
+                    if (!stageEvents[ev.mitre_tactic]) stageEvents[ev.mitre_tactic] = [];
+                    stageEvents[ev.mitre_tactic].push(ev);
+                });
+                container.innerHTML = '<div class="timeline-container">' + stages.map((stage, i) => {
+                    const evts = stageEvents[stage] || [];
+                    const hasEvents = evts.length > 0;
+                    const maxSev = evts.reduce((m, e) => {
+                        const order = {Critical:4,High:3,Medium:2,Low:1};
+                        return (order[e.severity]||0) > (order[m]||0) ? e.severity : m;
+                    }, '');
+                    const nodeClass = hasEvents ? (maxSev === 'Critical' ? 'critical' : maxSev === 'High' ? 'high' : 'active') : '';
+                    return `<div class="timeline-stage">
+                        ${i < stages.length - 1 ? '<div class="timeline-line"></div>' : ''}
+                        <div class="timeline-stage-label">${stage}</div>
+                        <div class="timeline-node ${nodeClass}" title="${evts.length} events"></div>
+                        <div class="timeline-events">${evts.length > 0 ? evts.length + ' events' : ''}</div>
+                    </div>`;
+                }).join('') + '</div>';
+            } catch (e) { console.error('Correlation timeline error:', e); }
+        }
+
+        // --- Geo Map ---
+        let geoMapInstance = null;
+        async function loadGeoMap() {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/geo-data`);
+                const data = await res.json();
+                const mapDiv = document.getElementById('geo-map');
+                if (!mapDiv) return;
+                if (!geoMapInstance) {
+                    geoMapInstance = L.map('geo-map').setView([20, 0], 2);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; OpenStreetMap',
+                        maxZoom: 18
+                    }).addTo(geoMapInstance);
+                }
+                // Clear existing markers
+                geoMapInstance.eachLayer(l => { if (l instanceof L.CircleMarker) geoMapInstance.removeLayer(l); });
+                // Add markers
+                if (data.countries) {
+                    data.countries.forEach(c => {
+                        if (c.lat === 0 && c.lon === 0 && c.country === 'Unknown') return;
+                        const radius = Math.min(30, Math.max(5, Math.sqrt(c.count) * 3));
+                        const color = c.avg_score > 70 ? '#ef4444' : c.avg_score > 40 ? '#f59e0b' : '#22c55e';
+                        L.circleMarker([c.lat, c.lon], {
+                            radius, color, fillColor: color, fillOpacity: 0.6, weight: 1
+                        }).addTo(geoMapInstance).bindPopup(
+                            `<b>${c.country}</b>${c.city ? ' - ' + c.city : ''}<br>Alerts: ${c.count}<br>Avg Score: ${c.avg_score}`
+                        );
+                    });
+                }
+                // Stats sidebar
+                const sidebar = document.getElementById('geo-stats-sidebar');
+                if (sidebar && data.countries) {
+                    sidebar.innerHTML = data.countries.slice(0, 6).map(c => `
+                        <div class="geo-stat-card">
+                            <div style="font-weight:bold;font-size:0.85em;">${c.country}</div>
+                            <div style="font-size:1.3em;font-weight:bold;color:var(--active-color);">${c.count}</div>
+                            <div style="font-size:0.7em;opacity:0.7;">Avg Score: ${c.avg_score}</div>
+                        </div>
+                    `).join('');
+                }
+                // Invalidate size after tab switch
+                setTimeout(() => geoMapInstance.invalidateSize(), 100);
+            } catch (e) { console.error('Geo map error:', e); }
+        }
+
+        // --- Data Source Health ---
+        async function loadDatasourceHealth() {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/datasource-health`);
+                const data = await res.json();
+                const container = document.getElementById('datasource-health-list');
+                if (!container || !data.sources) return;
+                container.innerHTML = data.sources.map(s => `
+                    <div class="datasource-item">
+                        <span class="datasource-dot ${s.status}"></span>
+                        <span class="datasource-name">${s.name}</span>
+                        <span class="datasource-latency">${s.latency_ms}ms</span>
+                    </div>
+                `).join('');
+            } catch (e) { /* silent */ }
+        }
+        // Load datasource health periodically
+        setInterval(loadDatasourceHealth, 30000);
+        setTimeout(loadDatasourceHealth, 2000);
+
+        // --- Saved Searches ---
+        function toggleSavedSearches() {
+            const list = document.getElementById('saved-search-list');
+            if (list.classList.contains('active')) { list.classList.remove('active'); return; }
+            list.classList.add('active');
+            loadSavedSearches();
+        }
+        async function loadSavedSearches() {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/saved-searches`);
+                const searches = await res.json();
+                const list = document.getElementById('saved-search-list');
+                if (!searches || searches.length === 0) {
+                    list.innerHTML = '<div class="saved-search-item" style="opacity:0.7;">No saved searches</div>';
+                    return;
+                }
+                list.innerHTML = searches.map(s => `
+                    <div class="saved-search-item" onclick="applySavedSearch(${JSON.stringify(s.filters).replace(/"/g, '&quot;')})">
+                        ${s.name} ${s.is_shared ? '(shared)' : ''}
+                        <span style="float:right;cursor:pointer;color:var(--high-severity);" onclick="event.stopPropagation();deleteSavedSearch(${s.id})">×</span>
+                    </div>
+                `).join('');
+            } catch (e) { console.error('Saved searches error:', e); }
+        }
+        async function saveCurrentSearch() {
+            const name = prompt('Name for this search:');
+            if (!name) return;
+            const filters = {
+                query: document.getElementById('search-query')?.value || '',
+                severity: document.getElementById('search-severity')?.value || '',
+                host: document.getElementById('search-host')?.value || '',
+                event_type: document.getElementById('search-event-type')?.value || '',
+                analyzer: document.getElementById('search-analyzer')?.value || '',
+                status: document.getElementById('search-status')?.value || ''
+            };
+            try {
+                await fetchWithAuth(`${API_BASE}/saved-searches`, {
+                    method: 'POST', body: JSON.stringify({ name, filters })
+                });
+                showToast('Search saved', 'success');
+            } catch (e) { console.error('Save search error:', e); }
+        }
+        function applySavedSearch(filters) {
+            if (filters.query) document.getElementById('search-query').value = filters.query;
+            if (filters.severity) document.getElementById('search-severity').value = filters.severity;
+            if (filters.host) document.getElementById('search-host').value = filters.host;
+            if (filters.event_type) document.getElementById('search-event-type').value = filters.event_type;
+            if (filters.analyzer) document.getElementById('search-analyzer').value = filters.analyzer;
+            if (filters.status) document.getElementById('search-status').value = filters.status;
+            document.getElementById('saved-search-list').classList.remove('active');
+            searchLogs();
+        }
+        async function deleteSavedSearch(id) {
+            try {
+                await fetchWithAuth(`${API_BASE}/saved-searches/${id}`, { method: 'DELETE' });
+                loadSavedSearches();
+            } catch (e) { console.error('Delete search error:', e); }
+        }
+
+        // --- Notification Sound + Desktop Alerts ---
+        let notificationSoundEnabled = localStorage.getItem('notif-sound') === '1';
+        let audioCtx = null;
+        function toggleNotificationSound() {
+            notificationSoundEnabled = !notificationSoundEnabled;
+            localStorage.setItem('notif-sound', notificationSoundEnabled ? '1' : '0');
+            document.getElementById('sound-toggle-btn').textContent = notificationSoundEnabled ? '🔊' : '🔇';
+            if (notificationSoundEnabled && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (notificationSoundEnabled) {
+                if (Notification.permission === 'default') Notification.requestPermission();
+            }
+        }
+        function playAlertTone() {
+            if (!notificationSoundEnabled || !audioCtx) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.5);
+            } catch (e) { /* silent */ }
+        }
+        function sendDesktopNotification(title, body) {
+            if (!notificationSoundEnabled || Notification.permission !== 'granted') return;
+            try { new Notification(title, { body, icon: '🛡️' }); } catch (e) { /* silent */ }
+        }
+        // Initialize sound toggle display
+        if (notificationSoundEnabled) {
+            document.getElementById('sound-toggle-btn').textContent = '🔊';
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // --- Dashboard Widget Customization (Drag & Drop) ---
+        function initWidgetDrag() {
+            const metrics = document.querySelector('#overview-tab .metrics');
+            if (!metrics) return;
+            const cards = metrics.querySelectorAll('.metric-card');
+            cards.forEach((card, i) => {
+                card.draggable = true;
+                card.dataset.index = i;
+                card.addEventListener('dragstart', e => {
+                    e.dataTransfer.setData('text/plain', i);
+                    card.classList.add('dragging');
+                });
+                card.addEventListener('dragend', () => card.classList.remove('dragging'));
+                card.addEventListener('dragover', e => e.preventDefault());
+                card.addEventListener('drop', e => {
+                    e.preventDefault();
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                    const toIdx = parseInt(card.dataset.index);
+                    if (fromIdx !== toIdx) {
+                        const allCards = [...metrics.children];
+                        const fromCard = allCards[fromIdx];
+                        if (fromIdx < toIdx) card.after(fromCard);
+                        else card.before(fromCard);
+                        // Re-index
+                        [...metrics.children].forEach((c, j) => c.dataset.index = j);
+                        // Save layout
+                        const layout = [...metrics.children].map(c => c.querySelector('.metric-label')?.textContent || '');
+                        localStorage.setItem('dashboard-layout', JSON.stringify(layout));
+                    }
+                });
+            });
+        }
+        // Init after DOM ready
+        setTimeout(initWidgetDrag, 1000);
+
+        // --- Per-Component Theming ---
+        function toggleComponentTheme(el) {
+            const parent = el.closest('.chart-container, .data-table, .metric-card');
+            if (parent) {
+                parent.classList.toggle('component-light');
+                const key = 'comp-theme-' + (parent.id || parent.querySelector('.chart-title,.table-title,.metric-label')?.textContent || '');
+                localStorage.setItem(key, parent.classList.contains('component-light') ? 'light' : 'dark');
+            }
+        }
+
+        // Hook into existing updateUserDisplay to apply role
+        const _origUpdateUser = updateUserDisplay;
+        updateUserDisplay = function(user) {
+            _origUpdateUser(user);
+            if (user && user.role) {
+                applyRoleVisibility(user.role);
+            }
+        };
+
+        // Hook into notification loading to play sound on new critical alerts
+        const _origNotifCountEl = document.getElementById('notification-count');
+        let _lastNotifCount = 0;
+        const _notifObserver = new MutationObserver(() => {
+            const count = parseInt(_origNotifCountEl?.textContent || '0');
+            if (count > _lastNotifCount && _lastNotifCount >= 0) {
+                playAlertTone();
+                sendDesktopNotification('SOC Alert', `${count} new notifications`);
+            }
+            _lastNotifCount = count;
+        });
+        if (_origNotifCountEl) _notifObserver.observe(_origNotifCountEl, { childList: true, characterData: true, subtree: true });
+
     </script>
 </body>
 </html>~
