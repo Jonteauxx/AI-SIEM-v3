@@ -151,46 +151,6 @@ services:
     networks:
       - siem-network
 
-  # ==============================================================================
-  # FluentD Log Collector
-  # ==============================================================================
-  fluentd:
-    image: fluent/fluentd:v1.16-debian
-    container_name: siem-fluentd
-    restart: unless-stopped
-    ports:
-      - "${FLUENTD_PORT:-24224}:24224"
-      - "${FLUENTD_PORT:-24224}:24224/udp"
-    volumes:
-      - ./fluentd/conf:/fluentd/etc:ro
-      - fluentd-logs:/fluentd/log
-    environment:
-      - FLUENTD_CONF=fluent.conf
-    depends_on:
-      - siem-api
-    networks:
-      - siem-network
-
-  # ==============================================================================
-  # Nginx Reverse Proxy (Optional - for production)
-  # ==============================================================================
-  nginx:
-    image: nginx:alpine
-    container_name: siem-nginx
-    restart: unless-stopped
-    ports:
-      - "${NGINX_HTTP_PORT:-80}:80"
-      - "${NGINX_HTTPS_PORT:-443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-    depends_on:
-      - siem-api
-    networks:
-      - siem-network
-    profiles:
-      - production
-
 # ==============================================================================
 # Networks
 # ==============================================================================
@@ -211,5 +171,3 @@ volumes:
     name: ollama-data
   opensearch-data:
     name: opensearch-data
-  fluentd-logs:
-    name: fluentd-logs
