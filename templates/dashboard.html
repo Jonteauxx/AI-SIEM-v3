@@ -1711,6 +1711,11 @@
                 <div class="metric-label">Pending Analysis</div>
                 <div class="metric-value" id="pending-logs">-</div>
                 <div class="metric-trend">Awaiting processing</div>
+                <button onclick="event.stopPropagation();clearPendingAnalysis()"
+                        style="margin-top:6px;padding:4px 10px;font-size:0.75em;background:var(--warning-severity);color:#000;border:none;border-radius:4px;cursor:pointer;width:100%;"
+                        title="Skip LLM analysis - move all to live feed">
+                    🗑️ Clear Pending
+                </button>
             </div>
             <div class="metric-card" onclick="showLogs('processed')">
                 <div class="metric-label">Processed</div>
@@ -2335,6 +2340,29 @@
             <span>📡 Live Log Feed</span>
             <span id="live-feed-count" style="font-size:0.9em;opacity:0.8;">0 events</span>
         </div>
+        <!-- Live Feed Filters -->
+        <div style="padding:4px 6px;background:rgba(0,0,0,0.2);border-bottom:1px solid var(--border-color);">
+            <div style="display:flex;gap:3px;margin-bottom:3px;">
+                <input type="text" id="live-feed-search" placeholder="🔍 Filter..."
+                       oninput="filterLiveFeed()"
+                       style="flex:1;padding:3px 6px;font-size:0.65em;background:var(--primary-bg);border:1px solid var(--border-color);border-radius:3px;color:var(--text-color);">
+                <select id="live-feed-severity" onchange="filterLiveFeed()"
+                        style="padding:3px 4px;font-size:0.65em;background:var(--primary-bg);border:1px solid var(--border-color);border-radius:3px;color:var(--text-color);">
+                    <option value="">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:3px;">
+                <input type="text" id="live-feed-host" placeholder="Host..."
+                       oninput="filterLiveFeed()"
+                       style="flex:1;padding:3px 6px;font-size:0.65em;background:var(--primary-bg);border:1px solid var(--border-color);border-radius:3px;color:var(--text-color);">
+                <button onclick="clearLiveFeedFilters()" style="padding:3px 6px;font-size:0.65em;background:var(--border-color);color:var(--text-color);border:none;border-radius:3px;cursor:pointer;" title="Clear filters">✕</button>
+                <button onclick="clearLiveFeed()" style="padding:3px 6px;font-size:0.65em;background:var(--border-color);color:var(--text-color);border:none;border-radius:3px;cursor:pointer;" title="Clear feed">🗑️</button>
+            </div>
+        </div>
         <div class="live-feed-body" id="live-feed-body"></div>
     </div>
 
@@ -2361,10 +2389,10 @@
     </div>
 
     <!-- Log Detail Modal -->
-    <div id="logModal" class="modal">
-        <div class="modal-content">
+    <div id="logModal" class="modal" onclick="if(event.target===this)closeModal()">
+        <div class="modal-content" style="max-width:700px;">
             <div class="modal-header">
-                <div class="modal-title">📋 Log Details & Enrichment</div>
+                <div class="modal-title">📋 Log Details</div>
                 <div class="close-btn" onclick="closeModal()">&times;</div>
             </div>
             <div id="modalBody">
@@ -2678,6 +2706,7 @@
             loadSystemMetrics();
             loadNotifications();
             startLiveFeed();  // Start permanent live feed sidebar
+            updatePendingCount();  // Initialize pending count badge
 
             // Auto-refresh intervals
             setInterval(loadData, 15000);           // Dashboard data every 15s
@@ -4857,17 +4886,59 @@
                         const div = document.createElement('div');
                         const sevClass = entry.severity ? entry.severity.toLowerCase() : '';
                         div.className = `live-feed-entry ${sevClass}`;
+                        div.dataset.severity = (entry.severity || 'info').toLowerCase();
+                        div.dataset.host = (entry.host || '').toLowerCase();
+                        div.dataset.content = (entry.raw_log || '').toLowerCase();
                         div.onclick = () => openLogById(entry.id);
                         const time = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
                         div.innerHTML = `<span style="opacity:0.6;">${time}</span> <b>[${entry.severity || 'Info'}]</b> ${entry.host || ''} ${(entry.raw_log || '').substring(0, 80)}`;
                         body.insertBefore(div, body.firstChild);
                     });
-                    // Update count
-                    if (countEl) countEl.textContent = `${body.children.length} events`;
+                    // Update count and apply current filters
+                    filterLiveFeed();
                     // Trim old entries (keep max 150)
                     while (body.children.length > 150) body.removeChild(body.lastChild);
                 }
             } catch (e) { /* silent */ }
+        }
+
+        function filterLiveFeed() {
+            const searchVal = (document.getElementById('live-feed-search')?.value || '').toLowerCase();
+            const severityVal = (document.getElementById('live-feed-severity')?.value || '').toLowerCase();
+            const hostVal = (document.getElementById('live-feed-host')?.value || '').toLowerCase();
+            const body = document.getElementById('live-feed-body');
+            const countEl = document.getElementById('live-feed-count');
+            if (!body) return;
+
+            let visibleCount = 0;
+            Array.from(body.children).forEach(entry => {
+                const severity = entry.dataset.severity || '';
+                const host = entry.dataset.host || '';
+                const content = entry.dataset.content || '';
+
+                const matchesSeverity = !severityVal || severity === severityVal;
+                const matchesHost = !hostVal || host.includes(hostVal);
+                const matchesSearch = !searchVal || content.includes(searchVal) || host.includes(searchVal);
+
+                if (matchesSeverity && matchesHost && matchesSearch) {
+                    entry.style.display = '';
+                    visibleCount++;
+                } else {
+                    entry.style.display = 'none';
+                }
+            });
+
+            if (countEl) countEl.textContent = `${visibleCount} events`;
+        }
+
+        function clearLiveFeedFilters() {
+            const searchEl = document.getElementById('live-feed-search');
+            const severityEl = document.getElementById('live-feed-severity');
+            const hostEl = document.getElementById('live-feed-host');
+            if (searchEl) searchEl.value = '';
+            if (severityEl) severityEl.value = '';
+            if (hostEl) hostEl.value = '';
+            filterLiveFeed();
         }
 
         async function openLogById(logId) {
@@ -4881,6 +4952,81 @@
             if (countEl) countEl.textContent = '0 events';
             showToast('Live feed cleared', 'info');
         }
+
+        // Show full log details in modal (for Live Feed clicks)
+        async function showLogDetails(logId) {
+            const modal = document.getElementById('logModal');
+            const modalBody = document.getElementById('modalBody');
+            modal.classList.add('active');
+            modalBody.innerHTML = '<div class="loading"><div class="spinner"></div>Loading log details...</div>';
+
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/log/${logId}`);
+                if (!res.ok) throw new Error('Failed to load log');
+                const log = await res.json();
+
+                const sevClass = log.severity ? log.severity.toLowerCase() : '';
+                modalBody.innerHTML = `
+                    <div style="margin-bottom:15px;">
+                        <span class="severity-badge ${sevClass}" style="font-size:1em;padding:4px 12px;">${log.severity || 'Unknown'}</span>
+                        <span style="margin-left:10px;opacity:0.7;">ID: ${log.id}</span>
+                        <span style="margin-left:10px;opacity:0.7;">${log.status || ''}</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;margin-bottom:15px;">
+                        <div style="opacity:0.7;">Host:</div><div><b>${log.host || 'Unknown'}</b></div>
+                        <div style="opacity:0.7;">Event Type:</div><div>${log.event_type || 'N/A'}</div>
+                        <div style="opacity:0.7;">Timestamp:</div><div>${log.timestamp || 'N/A'}</div>
+                        <div style="opacity:0.7;">Analyzed By:</div><div>${log.analyzed_by || 'N/A'}</div>
+                        <div style="opacity:0.7;">Processed At:</div><div>${log.processed_at || 'N/A'}</div>
+                    </div>
+                    ${log.ai_summary ? `<div style="margin-bottom:15px;padding:10px;background:rgba(96,165,250,0.1);border-radius:6px;"><b>AI Summary:</b><br>${log.ai_summary}</div>` : ''}
+                    <div style="margin-top:15px;">
+                        <div style="font-weight:bold;margin-bottom:8px;">📄 Raw Log:</div>
+                        <pre style="background:var(--primary-bg);padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-size:0.85em;max-height:300px;overflow-y:auto;border:1px solid var(--border-color);">${escapeHtml(log.raw_log || 'No raw log available')}</pre>
+                    </div>
+                `;
+            } catch (e) {
+                modalBody.innerHTML = `<div style="color:var(--critical-severity);padding:20px;text-align:center;">Failed to load log details: ${e.message}</div>`;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Clear pending analysis
+        async function clearPendingAnalysis() {
+            if (!confirm('Clear all pending logs from analysis queue? They will be marked as INFO and shown in the live feed.')) return;
+
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/clear-pending`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(`Cleared ${data.cleared} pending logs`, 'success');
+                    updatePendingCount();
+                    loadLiveFeed(); // Refresh live feed to show cleared logs
+                } else {
+                    showToast('Failed to clear pending logs', 'error');
+                }
+            } catch (e) {
+                showToast('Error clearing pending logs: ' + e.message, 'error');
+            }
+        }
+
+        // Update pending count badge
+        async function updatePendingCount() {
+            try {
+                const res = await fetch(`${API_BASE}/pending-count`);
+                const data = await res.json();
+                const badge = document.getElementById('pending-count-badge');
+                if (badge) badge.textContent = data.pending || 0;
+            } catch (e) { /* silent */ }
+        }
+
+        // Update pending count periodically
+        setInterval(updatePendingCount, 5000);
 
         // --- Shift Notes ---
         async function loadShiftNotes() {

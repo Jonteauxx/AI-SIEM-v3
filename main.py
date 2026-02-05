@@ -78,6 +78,12 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "5046"))
 HOST_IP = os.getenv("HOST_IP", '0.0.0.0')
 API_PORT = int(os.getenv("API_PORT", "8000"))
+
+# Syslog Configuration (for UniFi and other syslog sources)
+SYSLOG_ENABLED = os.getenv("SYSLOG_ENABLED", "true").lower() == "true"
+SYSLOG_UDP_PORT = int(os.getenv("SYSLOG_UDP_PORT", "514"))
+SYSLOG_TCP_PORT = int(os.getenv("SYSLOG_TCP_PORT", "1514"))
+SYSLOG_TCP_ENABLED = os.getenv("SYSLOG_TCP_ENABLED", "false").lower() == "true"
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # Database Configuration - PostgreSQL or SQLite
@@ -1330,35 +1336,121 @@ def check_ollama_health() -> bool:
         logger.error(f"Ollama health check failed: {e}")
         return False
 
+LLM_SYSTEM_PROMPT = """You are a Security Operations Center (SOC) analyst specializing in network security and UniFi infrastructure. Your task is to analyze security logs and classify them accurately.
+
+## UniFi Device Types You May See:
+- UDM/UDM-Pro/UDM-SE: UniFi Dream Machine (router/firewall/controller)
+- UAP-*: UniFi Access Points (wireless)
+- USW-*: UniFi Switches
+- USG/USG-Pro: UniFi Security Gateway
+- UXG-*: UniFi Next-Gen Gateway
+- UA-Hub/UA-Reader/UA-Lite/UA-Pro: UniFi Access (door access control)
+- UNVR: UniFi Network Video Recorder
+- UVC-*: UniFi Protect Cameras
+
+## UniFi Event Categories:
+
+### Critical Severity Events:
+- Firewall detecting active attacks (port scans, DDoS, intrusion attempts)
+- Unauthorized access to UniFi Access doors during locked hours
+- Multiple failed admin login attempts (brute force)
+- Rogue AP detected
+- IDS/IPS alerts for known exploits
+- Configuration tampering or factory reset
+- Firmware downgrade attempts
+
+### High Severity Events:
+- Failed authentication to network devices
+- New admin user created
+- Firewall rule changes
+- VPN connection from unusual location
+- Door forced open or held open alerts (UniFi Access)
+- Client blocked by threat management
+- Unusual outbound traffic patterns
+- Guest network abuse
+
+### Medium Severity Events:
+- New device connected to network
+- Client roaming between APs
+- DHCP scope exhaustion warnings
+- Channel changes due to interference
+- Door access granted outside business hours
+- Speed test or bandwidth anomalies
+- Certificate warnings
+
+### Low Severity Events:
+- Normal door access granted
+- Device firmware updates
+- Routine AP/switch status changes
+- Client connect/disconnect
+- Scheduled backups completed
+- Normal DHCP leases
+- Routine system health checks
+
+## Output Format:
+Respond with ONLY valid JSON, no other text:
+{"severity":"Critical|High|Medium|Low","event_type":"string","summary":"brief 1-2 sentence description"}"""
+
 def analyze_with_llm(raw_log: str) -> Dict[str, Any]:
     ollama_client = Client(host=OLLAMA_URL)
 
-    prompt = f"""Respond ONLY with valid JSON:
-{{"severity":"Low|Medium|High|Critical","event_type":"string","summary":"brief description"}}
+    user_prompt = f"""Analyze this security log and classify it.
 
-Log: {raw_log}"""
+Log: {raw_log}
+
+Respond with ONLY valid JSON:
+{{"severity":"Critical|High|Medium|Low","event_type":"category","summary":"brief description"}}"""
 
     try:
         response = ollama_client.chat(
             model=OLLAMA_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3, "num_thread": 16, "num_ctx": 1024}
+            messages=[
+                {"role": "system", "content": LLM_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            options={"temperature": 0.2, "num_thread": 16, "num_ctx": 2048}
         )
 
         response_text = response['message']['content'].strip()
 
+        # Try to extract JSON from various formats
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
             response_text = response_text.split("```")[1].split("```")[0].strip()
 
+        # Try to find JSON object in response
+        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+        if json_match:
+            response_text = json_match.group(0)
+
         analysis = json.loads(response_text)
 
-        required_fields = ['severity', 'event_type', 'summary']
-        if not all(field in analysis for field in required_fields):
-            raise ValueError("Missing required fields in LLM response")
+        # Normalize field names (handle case variations)
+        normalized = {}
+        for key, value in analysis.items():
+            normalized[key.lower()] = value
 
-        return analysis
+        # Map to expected fields
+        result = {
+            'severity': normalized.get('severity', 'Medium'),
+            'event_type': normalized.get('event_type', normalized.get('eventtype', normalized.get('type', 'Unknown'))),
+            'summary': normalized.get('summary', normalized.get('description', normalized.get('message', 'No summary')))
+        }
+
+        # Validate severity value
+        valid_severities = ['Critical', 'High', 'Medium', 'Low', 'Info']
+        if result['severity'] not in valid_severities:
+            # Try to match partial
+            sev_lower = result['severity'].lower()
+            for vs in valid_severities:
+                if vs.lower() in sev_lower or sev_lower in vs.lower():
+                    result['severity'] = vs
+                    break
+            else:
+                result['severity'] = 'Medium'
+
+        return result
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM JSON response: {e}")
@@ -1840,6 +1932,544 @@ def tcp_ingestor_thread():
                 logger.error(f"Accept connection error: {e}")
 
 # ==============================================================================
+# 9b. Syslog Ingestor (UniFi, Network Devices, etc.)
+# ==============================================================================
+# Syslog facility names
+SYSLOG_FACILITIES = {
+    0: "kern", 1: "user", 2: "mail", 3: "daemon", 4: "auth", 5: "syslog",
+    6: "lpr", 7: "news", 8: "uucp", 9: "cron", 10: "authpriv", 11: "ftp",
+    12: "ntp", 13: "security", 14: "console", 15: "solaris-cron",
+    16: "local0", 17: "local1", 18: "local2", 19: "local3",
+    20: "local4", 21: "local5", 22: "local6", 23: "local7"
+}
+
+SYSLOG_SEVERITIES = {
+    0: "Emergency", 1: "Alert", 2: "Critical", 3: "Error",
+    4: "Warning", 5: "Notice", 6: "Informational", 7: "Debug"
+}
+
+# Map syslog severity to our severity levels
+SYSLOG_TO_SEVERITY = {
+    0: "Critical",  # Emergency
+    1: "Critical",  # Alert
+    2: "Critical",  # Critical
+    3: "High",      # Error
+    4: "Medium",    # Warning
+    5: "Low",       # Notice
+    6: "Low",       # Informational
+    7: "Low"        # Debug
+}
+
+# UniFi device type patterns
+UNIFI_DEVICE_PATTERNS = {
+    r'U[A-Z]{2,3}-[A-Z0-9-]+': 'UniFi Access Point',
+    r'UDM-?(?:Pro|SE|Base)?': 'UniFi Dream Machine',
+    r'USW-[A-Z0-9-]+': 'UniFi Switch',
+    r'USG-?(?:Pro)?': 'UniFi Security Gateway',
+    r'UCK-?(?:G2)?': 'UniFi Cloud Key',
+    r'UA-(?:Hub|Reader|Lite|Pro|Intercom)': 'UniFi Access',
+    r'UVC-[A-Z0-9-]+': 'UniFi Protect Camera',
+    r'UNVR-?(?:Pro)?': 'UniFi NVR',
+    r'UBB': 'UniFi Building Bridge',
+    r'UXG-?(?:Pro|Lite|Max)?': 'UniFi Next-Gen Gateway',
+}
+
+# UniFi event patterns for pre-classification (pattern, event_type, severity_hint)
+# Order matters - more specific patterns should come before general ones
+UNIFI_EVENT_PATTERNS = [
+    # Critical events
+    (r'IDS[:\s].*(?:attack|exploit|intrusion)', 'IDS Alert', 'Critical'),
+    (r'IPS[:\s].*(?:blocked|dropped|attack)', 'IPS Block', 'Critical'),
+    (r'(?:rogue|unauthorized)\s*(?:ap|access\s*point)', 'Rogue AP Detected', 'Critical'),
+    (r'brute\s*force|multiple.*failed.*login', 'Brute Force Attack', 'Critical'),
+    (r'factory\s*reset|config.*wipe', 'Factory Reset', 'Critical'),
+    (r'firmware\s*downgrade', 'Firmware Downgrade', 'Critical'),
+    (r'door.*forced|forced.*entry', 'Forced Entry', 'Critical'),
+    (r'threat.*management.*block', 'Threat Blocked', 'Critical'),
+
+    # High severity events
+    (r'(?:admin|root).*(?:login|auth).*fail', 'Admin Auth Failure', 'High'),
+    (r'new\s*admin.*created|admin.*added', 'New Admin Created', 'High'),
+    (r'firewall.*rule.*(?:change|modify|add|delete)', 'Firewall Rule Change', 'High'),
+    (r'vpn.*(?:connect|tunnel).*(?:unusual|foreign|unexpected)', 'Suspicious VPN', 'High'),
+    (r'door.*held.*open|propped.*open', 'Door Held Open', 'High'),
+    (r'client.*blocked|block.*client', 'Client Blocked', 'High'),
+    (r'port\s*scan|scanning.*ports', 'Port Scan', 'High'),
+    (r'dhcp.*exhausted|no.*available.*leases', 'DHCP Exhausted', 'High'),
+    (r'spanning.*tree.*(?:change|topology)', 'STP Topology Change', 'High'),
+    (r'poe.*(?:overload|fault|exceeded)', 'PoE Fault', 'High'),
+
+    # Medium severity events
+    (r'new\s*device.*connect|unknown.*device', 'New Device Connected', 'Medium'),
+    (r'client.*roam|roaming.*to', 'Client Roaming', 'Medium'),
+    (r'(?:radar|dfs).*detect', 'DFS Radar Detected', 'Medium'),
+    (r'channel.*(?:change|switch)|switching.*channel', 'Channel Change', 'Medium'),
+    (r'interference.*detect|detected.*interference', 'Interference Detected', 'Medium'),
+    (r'access.*(?:granted|allowed).*(?:after|outside).*hours', 'After Hours Access', 'Medium'),
+    (r'certificate.*(?:expir|warn|invalid)', 'Certificate Warning', 'Medium'),
+    (r'high.*utilization|bandwidth.*threshold', 'High Utilization', 'Medium'),
+    (r'uplink.*(?:change|failover)', 'Uplink Failover', 'Medium'),
+    (r'radius.*(?:timeout|fail|reject)', 'RADIUS Issue', 'Medium'),
+    (r'wpa.*(?:timeout|fail|handshake)', 'WPA Handshake Issue', 'Medium'),
+
+    # Low severity events - WiFi/AP specific (must be before generic patterns)
+    (r'failed to find.*node|node.*not found', 'Client Lookup Failed', 'Low'),
+    (r'ieee80211.*deauth|deauthentication', 'Client Deauth', 'Low'),
+    (r'ieee80211.*disassoc|disassociation', 'Client Disassociation', 'Low'),
+    (r'sta.*(?:leave|left|timeout)', 'Station Left', 'Low'),
+    (r'tag_guest|guest.*tag', 'Guest Tagging', 'Low'),
+    (r'aid\s*\d+|association.*id', 'Association Event', 'Low'),
+    (r'ieee80211_ioctl|ioctl.*ieee80211', 'Wireless IOCTL', 'Low'),
+    (r'wlan\d*:.*sta|sta.*wlan', 'Wireless Station Event', 'Low'),
+    (r'hostapd.*sta|sta.*hostapd', 'Hostapd Station Event', 'Low'),
+    (r'(?:11[abnghac]{1,2}|wifi\d?).*(?:assoc|auth)', 'WiFi Association', 'Low'),
+    (r'beacon.*(?:loss|miss)|missed.*beacon', 'Beacon Loss', 'Low'),
+    (r'signal.*(?:low|weak)|weak.*signal', 'Weak Signal', 'Low'),
+    (r'retry.*(?:limit|exceed)|excessive.*retry', 'Retry Limit', 'Low'),
+    (r'kernel:.*ubnt_|ubnt_.*kernel', 'UniFi Kernel Event', 'Low'),
+    (r'mcad|wevent|stamgr|cfgmtd', 'UniFi System Process', 'Low'),
+
+    # Generic low severity events
+    (r'access.*granted|door.*unlock', 'Access Granted', 'Low'),
+    (r'firmware.*(?:update|upgrade).*(?:complete|success)', 'Firmware Updated', 'Low'),
+    (r'client.*(?:connect|associate|join)', 'Client Connected', 'Low'),
+    (r'client.*(?:disconnect|disassociate|leave)', 'Client Disconnected', 'Low'),
+    (r'backup.*(?:complete|success)', 'Backup Completed', 'Low'),
+    (r'dhcp.*(?:lease|assign)', 'DHCP Lease', 'Low'),
+    (r'speed\s*test|speedtest', 'Speed Test', 'Low'),
+    (r'system.*(?:boot|start|restart)', 'System Boot', 'Low'),
+    (r'adoption.*(?:complete|success)', 'Device Adopted', 'Low'),
+]
+
+def classify_unifi_event(log_content: str) -> Optional[Dict[str, str]]:
+    """Pre-classify UniFi events based on known patterns. Returns None if no match."""
+    log_lower = log_content.lower()
+    for pattern, event_type, severity in UNIFI_EVENT_PATTERNS:
+        if re.search(pattern, log_lower):
+            return {"event_type": event_type, "severity_hint": severity}
+    return None
+
+def parse_cef_message(message: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse CEF (Common Event Format) messages.
+    Format: CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
+
+    UniFi devices send CEF with custom extensions like:
+    - UNIFIdeviceIp: The REAL source IP of the device
+    - UNIFIdeviceName: The device hostname
+    - UNIFIdeviceModel: Device model (UCKP, UAP, USW, etc.)
+    - UNIFIdeviceMac: Device MAC address
+    """
+    # Find CEF header in message
+    cef_match = re.search(r'CEF:(\d+)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|(.*)', message)
+    if not cef_match:
+        return None
+
+    result = {
+        "cef_version": cef_match.group(1),
+        "vendor": cef_match.group(2),
+        "product": cef_match.group(3),
+        "product_version": cef_match.group(4),
+        "signature_id": cef_match.group(5),
+        "event_name": cef_match.group(6),
+        "cef_severity": cef_match.group(7),
+        "extensions": {}
+    }
+
+    # Parse extension key=value pairs
+    extension_str = cef_match.group(8)
+
+    # CEF extensions can have spaces in values, so we need careful parsing
+    # Pattern: key=value where value continues until next key= or end
+    ext_pattern = r'(\w+)=((?:[^=](?!\w+=))*[^=\s])'
+    for match in re.finditer(ext_pattern, extension_str):
+        key = match.group(1)
+        value = match.group(2).strip()
+        result["extensions"][key] = value
+
+    # Also try simpler space-separated parsing for UniFi format
+    # UNIFIhost=Host UNIFIdeviceName=SVD-AC-15427
+    simple_pattern = r'(\w+)=(\S+)'
+    for match in re.finditer(simple_pattern, extension_str):
+        key = match.group(1)
+        value = match.group(2)
+        if key not in result["extensions"]:
+            result["extensions"][key] = value
+
+    return result
+
+# UniFi device model to type mapping
+UNIFI_MODEL_TYPES = {
+    "UCKP": "UniFi Cloud Key Plus",
+    "UCK": "UniFi Cloud Key",
+    "UCKGEN2": "UniFi Cloud Key Gen2",
+    "UCKGEN2PLUS": "UniFi Cloud Key Gen2 Plus",
+    "UDM": "UniFi Dream Machine",
+    "UDMPRO": "UniFi Dream Machine Pro",
+    "UDMSE": "UniFi Dream Machine SE",
+    "UDMPROMAX": "UniFi Dream Machine Pro Max",
+    "UAP": "UniFi Access Point",
+    "UAPAC": "UniFi AP AC",
+    "UAPHD": "UniFi AP HD",
+    "USW": "UniFi Switch",
+    "USG": "UniFi Security Gateway",
+    "USGPRO": "UniFi Security Gateway Pro",
+    "UXG": "UniFi Next-Gen Gateway",
+    "UNVR": "UniFi NVR",
+    "UNVRPRO": "UniFi NVR Pro",
+    "UAHUB": "UniFi Access Hub",
+    "UAREADER": "UniFi Access Reader",
+    "UALITE": "UniFi Access Lite",
+    "UAPRO": "UniFi Access Pro",
+}
+
+def parse_syslog_message(data: bytes, source_addr: tuple) -> Dict[str, Any]:
+    """Parse a syslog message (RFC 3164, RFC 5424, or CEF format)."""
+    try:
+        message = data.decode('utf-8', errors='replace').strip()
+    except Exception:
+        message = str(data)
+
+    result = {
+        "raw_message": message,
+        "source_ip": source_addr[0],  # UDP source (may be NAT gateway)
+        "source_port": source_addr[1],
+        "real_device_ip": None,       # Actual device IP from CEF/log content
+        "real_device_mac": None,      # Device MAC if available
+        "facility": None,
+        "facility_name": None,
+        "syslog_severity": None,
+        "syslog_severity_name": None,
+        "severity": "Medium",
+        "timestamp": None,
+        "hostname": None,
+        "program": None,
+        "pid": None,
+        "content": message,
+        "device_type": "Syslog Device",
+        "device_model": None,
+        "cef_data": None,
+    }
+
+    # Parse priority (PRI) field: <priority>
+    pri_match = re.match(r'^<(\d{1,3})>', message)
+    if pri_match:
+        priority = int(pri_match.group(1))
+        result["facility"] = priority >> 3
+        result["syslog_severity"] = priority & 0x07
+        result["facility_name"] = SYSLOG_FACILITIES.get(result["facility"], f"facility{result['facility']}")
+        result["syslog_severity_name"] = SYSLOG_SEVERITIES.get(result["syslog_severity"], "Unknown")
+        result["severity"] = SYSLOG_TO_SEVERITY.get(result["syslog_severity"], "Medium")
+        message = message[pri_match.end():]
+
+    # Try RFC 5424 format first: VERSION SP TIMESTAMP SP HOSTNAME SP APP-NAME SP PROCID SP MSGID
+    rfc5424_match = re.match(
+        r'^(\d+)\s+'  # Version
+        r'(\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})?|-)\s+'  # Timestamp
+        r'(\S+)\s+'  # Hostname
+        r'(\S+)\s+'  # App-name
+        r'(\S+)\s+'  # Procid
+        r'(\S+)\s*'  # Msgid
+        r'(.*)',  # Message
+        message
+    )
+
+    if rfc5424_match:
+        result["timestamp"] = rfc5424_match.group(2) if rfc5424_match.group(2) != '-' else None
+        result["hostname"] = rfc5424_match.group(4) if rfc5424_match.group(4) != '-' else None
+        result["program"] = rfc5424_match.group(5) if rfc5424_match.group(5) != '-' else None
+        pid_str = rfc5424_match.group(6)
+        result["pid"] = pid_str if pid_str != '-' else None
+        result["content"] = rfc5424_match.group(8).strip()
+    else:
+        # Try RFC 3164 format: TIMESTAMP HOSTNAME TAG: MSG
+        # Timestamp formats: "Mon DD HH:MM:SS" or "Mon  D HH:MM:SS"
+        rfc3164_match = re.match(
+            r'^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'  # Timestamp
+            r'(\S+)\s+'  # Hostname
+            r'(\S+?)(?:\[(\d+)\])?:\s*'  # Program[PID]:
+            r'(.*)',  # Message
+            message,
+            re.IGNORECASE
+        )
+
+        if rfc3164_match:
+            result["timestamp"] = rfc3164_match.group(1)
+            result["hostname"] = rfc3164_match.group(2)
+            result["program"] = rfc3164_match.group(3)
+            result["pid"] = rfc3164_match.group(4)
+            result["content"] = rfc3164_match.group(5).strip()
+        else:
+            # Fallback: just use the whole message as content
+            result["content"] = message
+
+    # Parse CEF (Common Event Format) if present - this gives us the REAL device info
+    cef_data = parse_cef_message(message)
+    if cef_data:
+        result["cef_data"] = cef_data
+        ext = cef_data.get("extensions", {})
+
+        # Extract the REAL device IP (not the NAT gateway)
+        real_ip = ext.get("UNIFIdeviceIp") or ext.get("deviceIp") or ext.get("src") or ext.get("sourceAddress")
+        if real_ip:
+            result["real_device_ip"] = real_ip
+
+        # Extract the REAL hostname
+        real_hostname = ext.get("UNIFIdeviceName") or ext.get("deviceName") or ext.get("dvchost") or ext.get("sourceHostName")
+        if real_hostname:
+            result["hostname"] = real_hostname
+
+        # Extract MAC address
+        real_mac = ext.get("UNIFIdeviceMac") or ext.get("deviceMac") or ext.get("sourceMacAddress")
+        if real_mac:
+            result["real_device_mac"] = real_mac
+
+        # Extract device model
+        model = ext.get("UNIFIdeviceModel") or ext.get("deviceModel")
+        if model:
+            result["device_model"] = model
+            # Map model code to device type
+            model_upper = model.upper().replace("-", "").replace("_", "")
+            for code, dtype in UNIFI_MODEL_TYPES.items():
+                if code in model_upper:
+                    result["device_type"] = dtype
+                    break
+
+        # Get event name from CEF
+        if cef_data.get("event_name"):
+            result["cef_event_name"] = cef_data["event_name"]
+
+        # Get the actual message content
+        msg_content = ext.get("msg") or ext.get("message") or ext.get("reason")
+        if msg_content:
+            result["content"] = msg_content
+
+        # Set vendor info
+        if cef_data.get("vendor"):
+            result["vendor"] = cef_data["vendor"]
+
+    # Detect UniFi device type from hostname or message (if not already set from CEF)
+    if result["device_type"] == "Syslog Device":
+        search_text = f"{result.get('hostname', '')} {result.get('program', '')} {result.get('content', '')}"
+        for pattern, device_type in UNIFI_DEVICE_PATTERNS.items():
+            if re.search(pattern, search_text, re.IGNORECASE):
+                result["device_type"] = device_type
+                break
+
+    # Pre-classify UniFi events
+    event_class = classify_unifi_event(result.get("content", ""))
+    if event_class:
+        result["event_hint"] = event_class["event_type"]
+        result["severity_hint"] = event_class["severity_hint"]
+
+    return result
+
+def format_syslog_for_storage(parsed: Dict[str, Any]) -> str:
+    """Format parsed syslog data as a structured log entry for the database."""
+    parts = []
+
+    if parsed.get("timestamp"):
+        parts.append(f"timestamp={parsed['timestamp']}")
+    if parsed.get("hostname"):
+        parts.append(f"host={parsed['hostname']}")
+
+    # Use real device IP if available (from CEF), otherwise use UDP source
+    # This is critical for SOC - we need the ACTUAL source, not NAT gateway
+    if parsed.get("real_device_ip"):
+        parts.append(f"device_ip={parsed['real_device_ip']}")
+        # Also keep NAT source for audit trail
+        if parsed.get("source_ip") and parsed["source_ip"] != parsed["real_device_ip"]:
+            parts.append(f"nat_src={parsed['source_ip']}")
+    elif parsed.get("source_ip"):
+        parts.append(f"src_ip={parsed['source_ip']}")
+
+    # Include MAC address if available
+    if parsed.get("real_device_mac"):
+        parts.append(f"mac={parsed['real_device_mac']}")
+
+    # Include device model
+    if parsed.get("device_model"):
+        parts.append(f"model={parsed['device_model']}")
+    if parsed.get("device_type") and parsed["device_type"] != "Syslog Device":
+        parts.append(f"device_type={parsed['device_type']}")
+    if parsed.get("facility_name"):
+        parts.append(f"facility={parsed['facility_name']}")
+    if parsed.get("syslog_severity_name"):
+        parts.append(f"syslog_severity={parsed['syslog_severity_name']}")
+    if parsed.get("program"):
+        parts.append(f"program={parsed['program']}")
+    if parsed.get("pid"):
+        parts.append(f"pid={parsed['pid']}")
+
+    # Add event classification hints for LLM
+    if parsed.get("event_hint"):
+        parts.append(f"event_hint={parsed['event_hint']}")
+    if parsed.get("severity_hint"):
+        parts.append(f"severity_hint={parsed['severity_hint']}")
+
+    # Add the actual message content
+    parts.append(f"message={parsed.get('content', parsed.get('raw_message', ''))}")
+
+    return " | ".join(parts)
+
+def handle_syslog_message(data: bytes, addr: tuple):
+    """Process a single syslog message and store it in the database."""
+    try:
+        parsed = parse_syslog_message(data, addr)
+        formatted_log = format_syslog_for_storage(parsed)
+
+        if formatted_log.strip():
+            # Determine if this log needs LLM analysis or should go straight to live feed
+            # Info-level logs (Low severity, informational syslog) skip analysis
+            severity_hint = parsed.get("severity_hint", "").lower()
+            syslog_sev = parsed.get("syslog_severity", 99)  # 5=Notice, 6=Info, 7=Debug
+
+            # Skip analysis for low-severity/informational logs
+            skip_analysis = (
+                severity_hint == "low" or
+                syslog_sev >= 5 or  # Notice, Informational, Debug
+                parsed.get("event_hint") in ["Access Granted", "Client Connected", "Client Disconnected",
+                                              "Backup Completed", "DHCP Lease", "Speed Test",
+                                              "System Boot", "Device Adopted", "Firmware Updated"]
+            )
+
+            if skip_analysis:
+                # Mark as INFO - goes straight to live feed, no LLM analysis
+                status = 'INFO'
+                severity = parsed.get("severity_hint", "Info") or "Info"
+                event_type = parsed.get("event_hint", "Informational")
+                summary = parsed.get("content", "")[:150] if parsed.get("content") else ""
+            else:
+                # Mark as PENDING - will be analyzed by LLM
+                status = 'PENDING'
+                severity = None
+                event_type = None
+                summary = None
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"INSERT INTO raw_logs (timestamp, raw_log, status, host, severity, event_type, ai_summary) "
+                    f"VALUES ({sql_param()}, {sql_param()}, {sql_param()}, {sql_param()}, {sql_param()}, {sql_param()}, {sql_param()})",
+                    (datetime.datetime.now().isoformat(), formatted_log, status, parsed.get('hostname'),
+                     severity, event_type, summary)
+                )
+                conn.commit()
+
+            update_global_counts()
+            log_status = "INFO (live feed)" if skip_analysis else "PENDING (analysis)"
+            logger.debug(f"Syslog [{log_status}] from {addr[0]}: {parsed.get('hostname', 'unknown')} - {parsed.get('device_type', 'unknown')}")
+
+    except Exception as e:
+        logger.error(f"Error processing syslog message from {addr}: {e}")
+
+def syslog_udp_listener():
+    """UDP syslog listener thread for receiving logs from UniFi and other devices."""
+    if not SYSLOG_ENABLED:
+        logger.info("Syslog listener disabled")
+        return
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((HOST_IP, SYSLOG_UDP_PORT))
+        sock.settimeout(1.0)
+        logger.info(f"Syslog UDP listener started on {HOST_IP}:{SYSLOG_UDP_PORT}")
+
+        while INGESTOR_RUNNING.is_set():
+            try:
+                data, addr = sock.recvfrom(65535)
+                if data:
+                    handle_syslog_message(data, addr)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                logger.error(f"Syslog UDP receive error: {e}")
+
+    except PermissionError:
+        logger.error(f"Permission denied binding to UDP port {SYSLOG_UDP_PORT}. "
+                    f"Ports below 1024 require root. Try SYSLOG_UDP_PORT=1514 or run with elevated privileges.")
+    except Exception as e:
+        logger.error(f"Syslog UDP listener error: {e}")
+    finally:
+        try:
+            sock.close()
+        except:
+            pass
+
+def handle_syslog_tcp_connection(conn, addr):
+    """Handle a TCP syslog connection (for devices that send syslog over TCP)."""
+    buffer = b""
+    try:
+        while INGESTOR_RUNNING.is_set():
+            data = conn.recv(4096)
+            if not data:
+                break
+
+            buffer += data
+
+            # Process complete messages (newline or null delimited)
+            while b'\n' in buffer or b'\x00' in buffer:
+                # Find the first delimiter
+                newline_pos = buffer.find(b'\n')
+                null_pos = buffer.find(b'\x00')
+
+                if newline_pos >= 0 and (null_pos < 0 or newline_pos < null_pos):
+                    delim_pos = newline_pos
+                elif null_pos >= 0:
+                    delim_pos = null_pos
+                else:
+                    break
+
+                message = buffer[:delim_pos]
+                buffer = buffer[delim_pos + 1:]
+
+                if message.strip():
+                    handle_syslog_message(message, addr)
+
+    except Exception as e:
+        logger.error(f"Syslog TCP connection error from {addr}: {e}")
+    finally:
+        conn.close()
+
+def syslog_tcp_listener():
+    """TCP syslog listener thread for devices that send syslog over TCP."""
+    if not SYSLOG_ENABLED or not SYSLOG_TCP_ENABLED:
+        return
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((HOST_IP, SYSLOG_TCP_PORT))
+        sock.listen(10)
+        sock.settimeout(1.0)
+        logger.info(f"Syslog TCP listener started on {HOST_IP}:{SYSLOG_TCP_PORT}")
+
+        while INGESTOR_RUNNING.is_set():
+            try:
+                conn, addr = sock.accept()
+                threading.Thread(
+                    target=handle_syslog_tcp_connection,
+                    args=(conn, addr),
+                    daemon=True
+                ).start()
+            except socket.timeout:
+                continue
+            except Exception as e:
+                logger.error(f"Syslog TCP accept error: {e}")
+
+    except PermissionError:
+        logger.error(f"Permission denied binding to TCP port {SYSLOG_TCP_PORT}. "
+                    f"Ports below 1024 require root. Try SYSLOG_TCP_PORT=1514 or run with elevated privileges.")
+    except Exception as e:
+        logger.error(f"Syslog TCP listener error: {e}")
+    finally:
+        try:
+            sock.close()
+        except:
+            pass
+
+# ==============================================================================
 # 10. Log Processor
 # ==============================================================================
 def check_conditional_rules(raw_log: str, log_hash: str, host: str, source_ip: str) -> Optional[Dict[str, Any]]:
@@ -1960,11 +2590,11 @@ def processor_loop():
 
     while INGESTOR_RUNNING.is_set():
         try:
-            # Fetch pending logs
+            # Fetch pending logs (include existing host to preserve it)
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT id, raw_log FROM raw_logs WHERE status='PENDING' LIMIT ?",
+                    "SELECT id, raw_log, host FROM raw_logs WHERE status='PENDING' LIMIT ?",
                     (BATCH_SIZE,)
                 )
                 rows = cursor.fetchall()
@@ -1981,14 +2611,15 @@ def processor_loop():
             for row in rows:
                 log_id = row['id']
                 raw_log = row['raw_log']
+                existing_host = row['host']  # Preserve host set during ingestion
 
                 # Try processing with retries
                 for attempt in range(1, MAX_RETRIES + 1):
                     try:
                         logger.info(f"🔍 Analyzing log {log_id} (attempt {attempt}/{MAX_RETRIES})...")
 
-                        # Extract host from log first (needed for conditional rules)
-                        extracted_host = extract_host_from_log(raw_log)
+                        # Use existing host if set, otherwise extract from log
+                        extracted_host = existing_host if existing_host else extract_host_from_log(raw_log)
                         source_ip = extract_ip_from_log(raw_log)
 
                         # Measure processing time
@@ -2589,6 +3220,69 @@ async def get_analysis_status(request: Request, current_user: Dict[str, Any] = D
         "pending": PENDING_LOGS_COUNT
     }
 
+@app.get("/api/log-sources")
+@limiter.limit("60/minute")
+async def get_log_sources(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get statistics about log sources (hosts/devices sending logs)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get log counts by host
+        cursor.execute("""
+            SELECT host, COUNT(*) as count,
+                   MIN(timestamp) as first_seen,
+                   MAX(timestamp) as last_seen
+            FROM raw_logs
+            WHERE host IS NOT NULL AND host != ''
+            GROUP BY host
+            ORDER BY count DESC
+            LIMIT 50
+        """)
+        hosts = cursor.fetchall()
+
+        # Get total counts
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE host IS NOT NULL AND host != ''")
+        total_with_host = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE host IS NULL OR host = ''")
+        total_without_host = cursor.fetchone()[0]
+
+        # Detect device types from log content
+        device_stats = {}
+        cursor.execute("""
+            SELECT raw_log FROM raw_logs
+            WHERE raw_log LIKE '%device_type=%'
+            LIMIT 1000
+        """)
+        for row in cursor.fetchall():
+            log = row[0]
+            if 'device_type=' in log:
+                match = re.search(r'device_type=([^|]+)', log)
+                if match:
+                    dtype = match.group(1).strip()
+                    device_stats[dtype] = device_stats.get(dtype, 0) + 1
+
+    return {
+        "hosts": [
+            {
+                "hostname": row[0],
+                "log_count": row[1],
+                "first_seen": row[2],
+                "last_seen": row[3]
+            }
+            for row in hosts
+        ],
+        "device_types": device_stats,
+        "total_with_host": total_with_host,
+        "total_without_host": total_without_host,
+        "syslog_config": {
+            "enabled": SYSLOG_ENABLED,
+            "udp_port": SYSLOG_UDP_PORT,
+            "tcp_enabled": SYSLOG_TCP_ENABLED,
+            "tcp_port": SYSLOG_TCP_PORT if SYSLOG_TCP_ENABLED else None
+        }
+    }
+
 @app.get("/api/logs")
 @limiter.limit("100/minute")
 async def get_logs(request: Request, panel: str = "Total Logs", current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -2748,6 +3442,15 @@ async def search_logs(
         conditions = []
         params = []
 
+        # Exclude INFO status by default - INFO logs are for Live Feed only
+        # Security Event Search should only show PROCESSED, PENDING, and ERROR logs
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        else:
+            # Exclude INFO status when no specific status filter is applied
+            conditions.append("status != 'INFO'")
+
         if query:
             conditions.append("(raw_log LIKE ? OR ai_summary LIKE ?)")
             params.extend([f"%{query}%", f"%{query}%"])
@@ -2765,10 +3468,6 @@ async def search_logs(
         if event_type:
             conditions.append("event_type LIKE ?")
             params.append(f"%{event_type}%")
-
-        if status:
-            conditions.append("status = ?")
-            params.append(status)
 
         if analyzed_by:
             conditions.append("analyzed_by = ?")
@@ -4684,18 +5383,92 @@ async def get_triage_stats(request: Request, current_user: Dict[str, Any] = Depe
 @app.get("/api/info-logs")
 @limiter.limit("120/minute")
 async def get_info_logs(request: Request, since_id: int = 0):
-    """Get recent info-level logs for live feed"""
+    """Get recent logs for live feed - includes both processed and info (no-analysis) logs"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, timestamp, raw_log, host, ai_summary, severity
+            SELECT id, timestamp, raw_log, host, ai_summary, severity, status
             FROM raw_logs
-            WHERE id > ? AND status = 'PROCESSED'
+            WHERE id > ? AND status IN ('PROCESSED', 'INFO')
             ORDER BY id DESC LIMIT 50
         """, (since_id,))
         rows = cursor.fetchall()
     return [{"id": r[0], "timestamp": r[1], "raw_log": r[2][:200] if r[2] else "",
-             "host": r[3] or "Unknown", "summary": r[4] or "", "severity": r[5] or "Info"} for r in rows]
+             "host": r[3] or "Unknown", "summary": r[4] or r[2][:100] if r[2] else "",
+             "severity": r[5] or "Info", "status": r[6]} for r in rows]
+
+@app.get("/api/log/{log_id}")
+@limiter.limit("120/minute")
+async def get_log_detail(log_id: int, request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get full details of a specific log entry including raw log"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, timestamp, raw_log, host, ai_summary, severity, event_type,
+                   status, analyzed_by, processed_at, created_at
+            FROM raw_logs WHERE id = ?
+        """, (log_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Log not found")
+
+        return {
+            "id": row[0],
+            "timestamp": row[1],
+            "raw_log": row[2],  # Full raw log
+            "host": row[3],
+            "ai_summary": row[4],
+            "severity": row[5],
+            "event_type": row[6],
+            "status": row[7],
+            "analyzed_by": row[8],
+            "processed_at": row[9],
+            "created_at": row[10]
+        }
+
+@app.post("/api/clear-pending")
+@limiter.limit("10/minute")
+async def clear_pending_analysis(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Clear all pending logs - mark them as INFO (skipped analysis)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status = 'PENDING'")
+        pending_count = cursor.fetchone()[0]
+
+        if pending_count > 0:
+            cursor.execute("""
+                UPDATE raw_logs
+                SET status = 'INFO',
+                    ai_summary = 'Analysis skipped - cleared by user',
+                    severity = COALESCE(
+                        (SELECT CASE
+                            WHEN raw_log LIKE '%severity_hint=Critical%' THEN 'Critical'
+                            WHEN raw_log LIKE '%severity_hint=High%' THEN 'High'
+                            WHEN raw_log LIKE '%severity_hint=Medium%' THEN 'Medium'
+                            ELSE 'Low'
+                        END),
+                        'Info'
+                    )
+                WHERE status = 'PENDING'
+            """)
+            conn.commit()
+
+        update_global_counts()
+        record_audit(current_user.get('id'), current_user.get('username'), 'clear_pending',
+                     'system', None, json.dumps({"cleared_count": pending_count}),
+                     get_remote_address(request))
+
+        return {"status": "success", "cleared": pending_count}
+
+@app.get("/api/pending-count")
+@limiter.limit("120/minute")
+async def get_pending_count(request: Request):
+    """Get count of logs pending analysis"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status = 'PENDING'")
+        count = cursor.fetchone()[0]
+    return {"pending": count}
 
 # --- Shift Notes ---
 @app.get("/api/shift-notes")
@@ -5085,8 +5858,14 @@ if __name__ == "__main__":
             logger.info("Created templates directory")
 
         # Start background threads
-        threading.Thread(target=tcp_ingestor_thread, daemon=True, name="Ingestor").start()
+        threading.Thread(target=tcp_ingestor_thread, daemon=True, name="FluentD-Ingestor").start()
         threading.Thread(target=processor_loop, daemon=True, name="Processor").start()
+
+        # Start syslog listeners (for UniFi and other network devices)
+        if SYSLOG_ENABLED:
+            threading.Thread(target=syslog_udp_listener, daemon=True, name="Syslog-UDP").start()
+            if SYSLOG_TCP_ENABLED:
+                threading.Thread(target=syslog_tcp_listener, daemon=True, name="Syslog-TCP").start()
 
         # Wait a moment for threads to start
         time.sleep(1)
