@@ -21,6 +21,17 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 
+# Celery support (optional - graceful fallback if not available)
+CELERY_AVAILABLE = False
+try:
+    from celery_app import celery_app
+    from tasks.log_analysis import analyze_log_task
+    from core.shared_state import SharedState, get_shared_state
+    from core.config import Config as CoreConfig
+    CELERY_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Celery not available, using legacy processor: {e}")
+
 # PostgreSQL support
 try:
     import psycopg2
@@ -158,16 +169,53 @@ SESSION_INACTIVITY_TIMEOUT_MINUTES = int(os.getenv("SESSION_INACTIVITY_TIMEOUT_M
 INGESTOR_RUNNING = threading.Event()
 INGESTOR_RUNNING.set()
 
+# Global counters - will be backed by Redis if Celery is available
 TOTAL_LOGS_COUNT = 0
 PENDING_LOGS_COUNT = 0
 PROCESSED_LOGS_COUNT = 0
 PROCESSOR_ACTIVE = False
 metrics_lock = threading.Lock()
 
+# Celery feature flags
+CELERY_ENABLED = os.getenv("CELERY_ENABLED", "true").lower() == "true" and CELERY_AVAILABLE
+LEGACY_PROCESSOR_ENABLED = os.getenv("LEGACY_PROCESSOR_ENABLED", "false").lower() == "true"
+
 def set_processor_active(active):
     """Helper function to set PROCESSOR_ACTIVE global variable"""
     global PROCESSOR_ACTIVE
     PROCESSOR_ACTIVE = active
+
+def get_metrics_from_redis():
+    """Get metrics from Redis if available, otherwise use globals."""
+    global TOTAL_LOGS_COUNT, PENDING_LOGS_COUNT, PROCESSED_LOGS_COUNT
+    if CELERY_AVAILABLE:
+        try:
+            shared_state = get_shared_state()
+            metrics = shared_state.get_all_metrics()
+            return {
+                "total_logs": metrics.get("total_logs", TOTAL_LOGS_COUNT),
+                "pending_logs": metrics.get("pending_logs", PENDING_LOGS_COUNT),
+                "processed_logs": metrics.get("processed_logs", PROCESSED_LOGS_COUNT),
+            }
+        except Exception as e:
+            logger.debug(f"Redis metrics unavailable: {e}")
+    return {
+        "total_logs": TOTAL_LOGS_COUNT,
+        "pending_logs": PENDING_LOGS_COUNT,
+        "processed_logs": PROCESSED_LOGS_COUNT,
+    }
+
+def dispatch_log_analysis(log_id: int, raw_log: str, host: str = None):
+    """Dispatch log analysis to Celery worker if available."""
+    if CELERY_ENABLED:
+        try:
+            # Dispatch to Celery worker
+            analyze_log_task.delay(log_id, raw_log, host)
+            logger.debug(f"Dispatched log {log_id} to Celery worker")
+            return True
+        except Exception as e:
+            logger.warning(f"Celery dispatch failed for log {log_id}: {e}")
+    return False  # Fall back to legacy processor
 
 # ==============================================================================
 # 3. FastAPI App Configuration
@@ -1566,6 +1614,27 @@ def update_global_counts():
             cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status='PROCESSED'")
             PROCESSED_LOGS_COUNT = cursor.fetchone()[0]
 
+            # Also get info and error counts for Redis sync
+            cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status='INFO'")
+            info_count = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM raw_logs WHERE status='ERROR'")
+            error_count = cursor.fetchone()[0]
+
+        # Sync to Redis if available
+        if CELERY_AVAILABLE:
+            try:
+                shared_state = get_shared_state()
+                shared_state.sync_metrics_from_db(
+                    total=TOTAL_LOGS_COUNT,
+                    pending=PENDING_LOGS_COUNT,
+                    processed=PROCESSED_LOGS_COUNT,
+                    info=info_count,
+                    error=error_count
+                )
+            except Exception as e:
+                logger.debug(f"Redis sync failed: {e}")
+
 # ==============================================================================
 # 8b. NEW FEATURE HELPER FUNCTIONS
 # ==============================================================================
@@ -1888,8 +1957,9 @@ def handle_fluentd_connection(conn, addr):
                     # Plain string/bytes
                     logs_to_insert.append(decode_bytes(unpacked_message))
 
-                # Insert logs into database
+                # Insert logs into database and dispatch to Celery
                 if logs_to_insert:
+                    inserted_ids = []
                     with get_db() as conn_db:
                         cursor = conn_db.cursor()
                         for msg in logs_to_insert:
@@ -1898,7 +1968,18 @@ def handle_fluentd_connection(conn, addr):
                                     "INSERT INTO raw_logs (timestamp, raw_log, status) VALUES (?, ?, ?)",
                                     (datetime.datetime.now().isoformat(), str(msg), 'PENDING')
                                 )
+                                # Get the inserted ID for Celery dispatch
+                                if DB_TYPE == "postgresql":
+                                    cursor.execute("SELECT lastval()")
+                                    inserted_ids.append((cursor.fetchone()[0], str(msg)))
+                                else:
+                                    inserted_ids.append((cursor.lastrowid, str(msg)))
                         conn_db.commit()
+
+                    # Dispatch to Celery workers if enabled
+                    if CELERY_ENABLED:
+                        for log_id, raw_log in inserted_ids:
+                            dispatch_log_analysis(log_id, raw_log)
 
                     update_global_counts()
                     logger.info(f"Ingested {len(logs_to_insert)} logs from {addr}")
@@ -2346,6 +2427,7 @@ def handle_syslog_message(data: bytes, addr: tuple):
                 event_type = None
                 summary = None
 
+            log_id = None
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -2354,7 +2436,17 @@ def handle_syslog_message(data: bytes, addr: tuple):
                     (datetime.datetime.now().isoformat(), formatted_log, status, parsed.get('hostname'),
                      severity, event_type, summary)
                 )
+                # Get the inserted ID for Celery dispatch
+                if DB_TYPE == "postgresql":
+                    cursor.execute("SELECT lastval()")
+                    log_id = cursor.fetchone()[0]
+                else:
+                    log_id = cursor.lastrowid
                 conn.commit()
+
+            # Dispatch to Celery if pending and Celery is enabled
+            if not skip_analysis and CELERY_ENABLED and log_id:
+                dispatch_log_analysis(log_id, formatted_log, parsed.get('hostname'))
 
             update_global_counts()
             log_status = "INFO (live feed)" if skip_analysis else "PENDING (analysis)"

@@ -3781,11 +3781,9 @@
                         <th>ID</th>
                         <th>Severity</th>
                         <th>Host</th>
+                        <th>Device Type</th>
                         <th>Timestamp</th>
                         <th>Event Type</th>
-                        <th>Analyzer</th>
-                        <th>Time (ms)</th>
-                        <th>SLA</th>
                         <th>Summary</th>
                     </tr>
                 </thead>
@@ -3796,24 +3794,20 @@
                 const severity = log.Severity || 'Unknown';
                 const severityClass = severity.toLowerCase();
                 const timestamp = new Date(log.Timestamp).toLocaleString();
-                const processingTime = log['Processing Time (ms)'];
-                const analyzer = log['Analyzed By'] || 'N/A';
-                const analyzerBadge = analyzer === 'llm' ? 'badge-high' :
-                                      analyzer === 'knowledge_base' ? 'badge-low' :
-                                      analyzer === 'conditional_rule' ? 'badge-medium' : '';
-                const slaHtml = getSLATimerHTML(severity, log.Timestamp);
+                // Extract device type from raw log if available
+                const rawLog = log['Raw Log'] || '';
+                const deviceTypeMatch = rawLog.match(/device_type=([^|]+)/);
+                const deviceType = deviceTypeMatch ? deviceTypeMatch[1].trim() : 'Unknown';
 
                 html += `<tr onclick="showLogDetail(${index})" style="cursor: pointer;">
                     <td onclick="event.stopPropagation()"><input type="checkbox" class="triage-checkbox" data-log-id="${log.TLID}" onchange="toggleTriageSelect(${log.TLID}, this)"></td>
                     <td>${log.TLID}</td>
                     <td><span class="badge badge-${severityClass}">${severity}</span></td>
                     <td>${log.HOST || 'N/A'}</td>
+                    <td style="font-size:0.85em;">${deviceType}</td>
                     <td>${timestamp}</td>
                     <td>${log['Event Type'] || 'N/A'}</td>
-                    <td><span class="badge ${analyzerBadge}" style="font-size: 0.75em;">${analyzer}</span></td>
-                    <td>${processingTime !== null ? processingTime : '-'}</td>
-                    <td>${slaHtml}</td>
-                    <td title="${log['AI Summary'] || ''}">${(log['AI Summary'] || '').substring(0, 60)}${(log['AI Summary'] || '').length > 60 ? '...' : ''}</td>
+                    <td title="${log['AI Summary'] || ''}">${(log['AI Summary'] || '').substring(0, 80)}${(log['AI Summary'] || '').length > 80 ? '...' : ''}</td>
                 </tr>`;
             });
 

@@ -45,6 +45,12 @@ python-jose[cryptography]==3.3.0
 # gunicorn==21.2.0  # Production WSGI server
 # psycopg2-binary==2.9.9  # PostgreSQL adapter (if migrating from SQLite)
 
+# Background Task Queue (Celery/Redis)
+celery[redis]==5.3.6
+redis==5.0.1
+kombu==5.3.4
+flower==2.0.1
+
 # Development Dependencies (optional)
 # pytest==7.4.3
 # pytest-asyncio==0.21.1
