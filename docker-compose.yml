@@ -27,6 +27,27 @@ services:
       start_period: 10s
 
   # ==============================================================================
+  # Redis - Message Broker & Result Backend for Celery
+  # ==============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: siem-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - siem-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ==============================================================================
   # SIEM API Service - Main Application
   # ==============================================================================
   siem-api:
@@ -82,12 +103,20 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-}
       - ALERT_SEVERITY_THRESHOLD=${ALERT_SEVERITY_THRESHOLD:-High}
+      # Celery / Redis
+      - CELERY_ENABLED=${CELERY_ENABLED:-true}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-4}
     volumes:
       - siem-data:/app/data
       - siem-logs:/app/logs
       - ./templates:/app/templates:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       opensearch:
         condition: service_healthy
@@ -101,6 +130,74 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  # ==============================================================================
+  # Celery Worker - Background Task Processing
+  # ==============================================================================
+  celery-worker:
+    image: soc-agent-siem-api:latest
+    container_name: siem-celery-worker
+    restart: unless-stopped
+    command: celery -A celery_app worker --loglevel=info -Q default,log_analysis,log_analysis_priority,maintenance,retention --concurrency=${CELERY_CONCURRENCY:-4}
+    environment:
+      - DB_NAME=/app/data/ai_agent_logs.db
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-soc_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-soc_agent}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-4}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral:7b}
+      - ES_HOSTS=http://opensearch:9200
+      - ES_INDEX=${ES_INDEX:-ai-analyzed-logs}
+    volumes:
+      - siem-data:/app/data
+      - siem-logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # Celery Beat - Periodic Task Scheduler
+  # ==============================================================================
+  celery-beat:
+    image: soc-agent-siem-api:latest
+    container_name: siem-celery-beat
+    restart: unless-stopped
+    command: celery -A celery_app beat --loglevel=info --schedule=/app/data/celerybeat-schedule
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - siem-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - siem-network
+
+  # ==============================================================================
+  # Flower - Celery Monitoring Dashboard
+  # ==============================================================================
+  flower:
+    image: soc-agent-siem-api:latest
+    container_name: siem-flower
+    restart: unless-stopped
+    command: celery -A celery_app flower --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - siem-network
 
   # ==============================================================================
   # Ollama LLM Service
@@ -199,5 +296,7 @@ volumes:
     name: siem-logs
   ollama-data:
     name: ollama-data
+  redis-data:
+    name: siem-redis-data
   opensearch-data:
     name: opensearch-data
